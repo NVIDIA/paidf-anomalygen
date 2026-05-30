@@ -1,0 +1,71 @@
+logs/
+tmp/
+# Keep the build context small: the Dockerfile does `COPY . /workspace/...`,
+# so anything not excluded here ends up baked into the image.
+
+# VCS
+.git
+.gitattributes
+.gitignore
+.gitlab-ci.yml
+.sonar
+
+# Large data / artifacts (mount these at runtime instead)
+checkpoints/
+datasets/
+results/
+output/
+plots/
+ag_inference/testcase_*
+
+# Python bytecode / build artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+develop-eggs/
+.eggs/
+wheels/
+share/python-wheels/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtualenvs
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Test / coverage / type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Editors / IDEs
+.vscode/
+.idea/
+.cursorignore
+.cursorindexingignore
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

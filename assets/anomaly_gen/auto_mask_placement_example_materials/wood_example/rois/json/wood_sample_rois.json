@@ -1,0 +1,28 @@
+{
+  "rois": [
+    {
+      "id": "main_mask_01",
+      "x": 113,
+      "y": 211,
+      "width": 406,
+      "height": 172,
+      "is_legal": true
+    },
+    {
+      "id": "main_mask_02",
+      "x": 328,
+      "y": 451,
+      "width": 539,
+      "height": 217,
+      "is_legal": true
+    },
+    {
+      "id": "main_mask_03",
+      "x": 788,
+      "y": 689,
+      "width": 449,
+      "height": 144,
+      "is_legal": true
+    }
+  ]
+}

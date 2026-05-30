@@ -1,0 +1,19 @@
+[
+    {
+        "image_path": "assets/anomaly_gen/auto_mask_placement_example_materials/reversi_example/image/reversi.png",
+        "boxes": [
+            [
+                87,
+                23,
+                114,
+                50
+            ],
+            [
+                54,
+                86,
+                82,
+                113
+            ]
+        ]
+    }
+]
