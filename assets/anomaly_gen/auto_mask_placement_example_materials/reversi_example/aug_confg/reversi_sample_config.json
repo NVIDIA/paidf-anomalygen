@@ -1,0 +1,15 @@
+{
+  "shift_probability": 0.5,
+  "shift_range": [0, 0],
+  "rotation_probability": 1.0,
+  "rotation_range": [-30, 30],
+  "scale_probability": 1.0,
+  "scale_x_range": [0.95, 0.95],
+  "scale_y_range": [0.3, 5.0],
+  "flip_probability": 0.0,
+  "affine_probability": 1.0,
+  "affine_shear_range": [-0.2, 0.2],
+  "morph_probability": 1.0,
+  "morph_operations": ["dilate", "erode", "open", "close"],
+  "kernel_size": 5
+}

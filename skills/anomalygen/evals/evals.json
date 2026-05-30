@@ -1,0 +1,38 @@
+[
+  {
+    "id": "1",
+    "question": "I have a checkpoint at `results/anomaly_gen/bottle_run/bottle_run_training_FP32_lr0.02_bs=2_2B_512x512` step 50000. Generate 200 SDG images for `bottle+hairy` and `bottle+scratch` from dataset `datasets/bottle`.",
+    "expected_skill": "anomalygen",
+    "ground_truth": "Response sets mode=inference_only because the user supplied a pre-trained checkpoint and step. Shared variable block has NUM_SDG=200, DEFECTS=(bottle+hairy bottle+scratch), CKPT and STEP set from the user's input, DATASET_DIR=datasets/bottle. MODEL_SIZE=2b is derived from the `_2B_` segment in the checkpoint path. Phase 0 verifies checkpoints, Phase 1 is skipped entirely, Phases 2-7 run with defaults (NUM_SEARCH_RUN=3, NN_THRESHOLD=0.4).",
+    "expected_behavior": [
+      "Response sets mode=inference_only (NOT mode=full) because a pre-trained checkpoint is supplied.",
+      "Shared variable block has NUM_SDG=200, DEFECTS=(bottle+hairy bottle+scratch), CKPT and STEP set from the user's input.",
+      "Response does NOT run Phase 1 (finetune); produces commands for Phase 0 then Phases 2-7 only.",
+      "Response derives MODEL_SIZE=2b from the `_2B_` segment in the checkpoint path."
+    ]
+  },
+  {
+    "id": "2",
+    "question": "Run the full AnomalyGen pipeline for a new `cable` dataset at `datasets/cable`. Defect spec is at `datasets/cable/defect_spec.jsonl`. Generate 100 SDG images.",
+    "expected_skill": "anomalygen",
+    "ground_truth": "Response sets mode=full because no checkpoint was supplied. Shared variable block has NUM_SDG=100, DATASET_DIR=datasets/cable, DEFECT_DESC=datasets/cable/defect_spec.jsonl. Phase 1 (finetune) runs before Phases 2-7; CKPT and STEP are auto-derived from training output afterward. Other parameters use their defaults (NUM_GPUS=1, MODEL_SIZE=2b, NUM_SEARCH_RUN=3, NN_THRESHOLD=0.4).",
+    "expected_behavior": [
+      "Response sets mode=full (NOT mode=inference_only) because no checkpoint was supplied.",
+      "Shared variable block has NUM_SDG=100, DATASET_DIR=datasets/cable, DEFECT_DESC=datasets/cable/defect_spec.jsonl.",
+      "Response runs Phase 1 (finetune) before Phases 2-7; CKPT and STEP are auto-derived after Phase 1, not user-supplied."
+    ]
+  },
+  {
+    "id": "3",
+    "question": "I trained a model on just `scratch` defects for the `tile` texture. Now I want to add `crack` defects too without retraining. Checkpoint is at `results/anomaly_gen/tile_scratch/tile_scratch_training_FP32_lr0.02_bs=2_2B_512x512`, step 50000. Dataset at `datasets/tile`.",
+    "expected_skill": "anomalygen",
+    "ground_truth": "Response does NOT run the inference pipeline. It first inspects the checkpoint's ag_config.yaml (dataloader_train.dataset.anomaly_types) and recognizes that tile+crack is not in the trained defect set — the checkpoint was trained only on tile+scratch. The response explains the mismatch clearly and presents three options with trade-offs: (1) mode=full retrain on the extended defect set (long; preserves both defects in one model); (2) train an isolated new model with a separate name= just for crack (faster; two models to manage); (3) trim defect_spec to only scratch (no training but does not satisfy the user's original request). It notes that the skill does not support warm-start finetune.",
+    "expected_behavior": [
+      "Response does NOT run SDG inference for crack — does NOT silently try to generate with an unsupported defect type.",
+      "Response inspects the checkpoint's ag_config.yaml (dataloader_train.dataset.anomaly_types) and explicitly identifies that tile+crack is not in the trained defect set.",
+      "Response presents the three documented options: full retrain on extended set, isolated new model for crack, or trim spec to scratch only.",
+      "Response notes that the skill does NOT support warm-start finetune (cannot add a defect to an existing checkpoint).",
+      "Response surfaces the trade-offs of each option (training time vs. one-model-vs-two vs. dropping the user's request)."
+    ]
+  }
+]

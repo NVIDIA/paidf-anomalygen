@@ -1,0 +1,15 @@
+[
+  {
+    "id": "1",
+    "question": "I need to deploy AnomalyGen to a machine that has no internet access at runtime. Can you build an image for that?",
+    "expected_skill": "anomalygen-release",
+    "ground_truth": "Response recognizes this as an air-gapped scenario (no runtime network → checkpoints must be baked into the image). It invokes scripts/build_airgapped_image.sh --mode product, explains that HF_TOKEN is required for auto-download of missing checkpoints, notes the resulting image is ~75 GB+, and mentions --skip-download if checkpoints are already present. It includes docker save | gzip > tar.gz on the build host and docker load on the air-gapped host for the transfer step, and runs scripts/validate_image_permissions.sh after the build.",
+    "expected_behavior": [
+      "Response selects scripts/build_airgapped_image.sh (NOT build_image.sh).",
+      "Response notes HF_TOKEN is required for auto-download of missing checkpoints.",
+      "Response notes the resulting image is ~75 GB+ (substantially larger than the thin image).",
+      "Response provides docker save | gzip and docker load commands for delivering to the air-gapped host.",
+      "Response invokes scripts/validate_image_permissions.sh after the build (or names validation as the next step)."
+    ]
+  }
+]
