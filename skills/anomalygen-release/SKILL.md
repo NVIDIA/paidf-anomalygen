@@ -2,7 +2,7 @@
 name: anomalygen-release
 description: >-
   Build and validate PAIDF AnomalyGen product and develop Docker containers
-  from docker/Dockerfile.cuda128. Use when the user asks to build an anomalygen
+  from docker/Dockerfile. Use when the user asks to build an anomalygen
   product container, build an anomalygen develop container, validate container
   runtime permissions, or produce release summaries.
 license: Apache-2.0
@@ -53,11 +53,41 @@ Build airgapped product image
 Build airgapped develop image
 ```
 
+## Target Architecture
+
+The repo ships two Dockerfiles, one per host architecture:
+
+| Architecture | Dockerfile | CUDA | GPUs |
+|---|---|---|---|
+| **x86_64** (default) | `docker/Dockerfile` | 12.8 | Blackwell-class, e.g. RTX PRO 6000 |
+| **arm64** | `docker/Dockerfile.arm.cuda130` | 13.0 | GB10 / GB200 / GB300 |
+
+A Docker image is built for the **host's** architecture — this skill does not
+cross-build. **Auto-detect the host arch and confirm the matching Dockerfile
+with the user** before building (don't ask open-endedly — detect, then confirm):
+
+```bash
+uname -m   # x86_64 -> docker/Dockerfile ; aarch64/arm64 -> docker/Dockerfile.arm.cuda130
+```
+
+State the detected choice and let the user confirm or override, e.g. *"Detected
+aarch64 → building with `docker/Dockerfile.arm.cuda130` (arm64 / CUDA 13).
+Proceed?"* If the user already named an architecture, skip the confirmation and
+use it. Only deviate from the host arch if the user explicitly asks.
+
+Pass the chosen file via `--dockerfile` to `build_image.sh` /
+`build_airgapped_image.sh` (the x86 `docker/Dockerfile` is the default, so it
+can be omitted for x86). The scripts preflight the matching conda spec and
+requirements file (`cuda130` for arm, `cuda128` otherwise) automatically.
+
+For arm builds, give the image an arch-distinct `--tag` or `--image-name` (e.g.
+`--tag cuda13-arm-$(date -u +%Y%m%d)`) so it does not clobber the x86 image.
+
 ## Scope
 
 Allowed:
 
-- Inspect `docker/Dockerfile.cuda128` and `docker/Dockerfile.cuda128.airgapped`
+- Inspect `docker/Dockerfile` (all targets, including the airgapped ones)
   and release inputs.
 - Build product or develop images (standard or air-gapped) with the helper scripts.
 - Auto-download missing checkpoints when building an air-gapped image.
@@ -78,7 +108,7 @@ Do not:
 Product container:
 
 ```bash
-bash scripts/build_image.sh --mode product
+bash skills/anomalygen-release/scripts/build_image.sh --mode product
 ```
 
 Equivalent Docker command:
@@ -87,7 +117,7 @@ Equivalent Docker command:
 DATE_TAG="$(date -u +%Y%m%d)"
 DOCKER_BUILDKIT=1 docker build \
     --target product \
-    -f docker/Dockerfile.cuda128 \
+    -f docker/Dockerfile \
     -t "paidf-anomalygen:${DATE_TAG}" \
     .
 ```
@@ -95,28 +125,39 @@ DOCKER_BUILDKIT=1 docker build \
 Develop container:
 
 ```bash
-bash scripts/build_image.sh --mode develop
+bash skills/anomalygen-release/scripts/build_image.sh --mode develop
 ```
 
 Use a minute-level tag when multiple builds may happen in one day:
 
 ```bash
-bash scripts/build_image.sh \
+bash skills/anomalygen-release/scripts/build_image.sh \
     --mode product \
     --tag "$(date -u +%Y%m%d-%H%M)"
+```
+
+arm64 / CUDA-13 build (on an aarch64 host) — pass the arm Dockerfile and an
+arch-distinct tag:
+
+```bash
+bash skills/anomalygen-release/scripts/build_image.sh \
+    --mode product \
+    --dockerfile docker/Dockerfile.arm.cuda130 \
+    --tag "cuda13-arm-$(date -u +%Y%m%d)"
 ```
 
 ## Air-Gapped Image
 
 Use when the target environment has no network access and cannot pull
-checkpoints at runtime. The airgapped build uses
-`docker/Dockerfile.cuda128.airgapped`, which bakes all checkpoints into the
-image layers. The result is self-contained (~75 GB+).
+checkpoints at runtime. The airgapped build uses the `airgapped-product` /
+`airgapped-develop` targets of `docker/Dockerfile`, which bake all checkpoints
+into the image layers via a named build context (`--build-context
+ckpts=checkpoints`). The result is self-contained (~75 GB+).
 
 ### Canonical command
 
 ```bash
-bash scripts/build_airgapped_image.sh \
+bash skills/anomalygen-release/scripts/build_airgapped_image.sh \
     --mode product
 ```
 
@@ -129,13 +170,15 @@ The script:
    - `checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt`
    - `checkpoints/nvidia/C-RADIO-V3/model.safetensors`
    - `checkpoints/sam2/sam2.1_hiera_large.pt`
+   - `checkpoints/Qwen/Qwen3-VL-4B-Instruct/` (non-empty)
    - `checkpoints/facebook/dinov2-large/` (non-empty)
    - `checkpoints/google-t5/t5-large/` or `checkpoints/google-t5/t5-11b/`
      (at least one)
 
 2. **Auto-downloads** any missing checkpoints via
    `scripts/utilities/download_checkpoints.sh`. This requires
-   `HF_TOKEN` to be exported and `huggingface-cli` in `PATH`. If you do
+   `HF_TOKEN` to be exported and the `hf` CLI (`huggingface_hub >= 1.x`)
+   in `PATH`. If you do
    not want auto-download, pass `--skip-download` and download manually
    with the setup skill first.
 
@@ -151,12 +194,18 @@ Default image names:
 Options:
 
 ```bash
-bash scripts/build_airgapped_image.sh \
+bash skills/anomalygen-release/scripts/build_airgapped_image.sh \
     --mode product|develop \
     --tag YYYYMMDD \
     --checkpoint-dir checkpoints \
+    --dockerfile docker/Dockerfile \
     --skip-download
 ```
+
+Pass `--dockerfile docker/Dockerfile.arm.cuda130` to build the arm64 / CUDA-13
+air-gapped image instead of the default x86 / CUDA-12.8 one (build on an aarch64
+host). Give it a distinct `--tag` or `--image-name` to avoid clobbering the x86
+image's tag.
 
 ### Running the air-gapped image
 
@@ -191,11 +240,14 @@ in develop containers:
 
 ```text
 /workspace/paidf-anomalygen/cosmos_predict2/
+/workspace/paidf-anomalygen/imaginaire/
+/workspace/paidf-anomalygen/automatic_mask_placement/
+/workspace/paidf-anomalygen/pseudo_label/
+/workspace/paidf-anomalygen/roi_generate/
 /workspace/paidf-anomalygen/scripts/anomaly_gen/
 /workspace/paidf-anomalygen/scripts/utilities/
-/workspace/paidf-anomalygen/.agents/skills/
+/workspace/paidf-anomalygen/skills/
 /workspace/paidf-anomalygen/README.md
-/workspace/paidf-anomalygen/CLAUDE.md
 /workspace/paidf-anomalygen/docker/Dockerfile*
 /workspace/paidf-anomalygen/requirements*.txt
 /workspace/paidf-anomalygen/cosmos-predict2-cuda128.yaml
@@ -228,7 +280,7 @@ volumes or pre-created subdirectories, so each of these must also be writable:
 # SDG output (original and searched buckets, plus per-round refine)
 /workspace/paidf-anomalygen/results/_permission_test/original/reconstructed_image
 /workspace/paidf-anomalygen/results/_permission_test/original/original_mask
-/workspace/paidf-anomalygen/results/_permission_test/original/overlay_image
+/workspace/paidf-anomalygen/results/_permission_test/original/annotated_image
 /workspace/paidf-anomalygen/results/_permission_test/searched/reconstructed_image
 /workspace/paidf-anomalygen/results/_permission_test/rounds/round_001/sdg/reconstructed_image
 
@@ -267,7 +319,7 @@ leaves production code writable, treat the image as not productized.
 Before building:
 
 1. Verify these files exist:
-   - `docker/Dockerfile.cuda128`
+   - `docker/Dockerfile`
    - `cosmos-predict2-cuda128.yaml`
    - `requirements-conda-cuda128.txt`
 2. Verify the Docker build context does not intentionally include secrets:
@@ -286,7 +338,7 @@ Before building:
 After building a product image:
 
 ```bash
-bash scripts/validate_image_permissions.sh \
+bash skills/anomalygen-release/scripts/validate_image_permissions.sh \
     --mode product \
     "paidf-anomalygen:${DATE_TAG}"
 ```
@@ -294,7 +346,7 @@ bash scripts/validate_image_permissions.sh \
 After building a develop image:
 
 ```bash
-bash scripts/validate_image_permissions.sh \
+bash skills/anomalygen-release/scripts/validate_image_permissions.sh \
     --mode develop \
     "paidf-anomalygen-dev:${DATE_TAG}"
 ```
@@ -340,7 +392,7 @@ Report:
 Image: paidf-anomalygen:<tag>
 Mode: product | develop
 Image ID: <docker image id>
-Dockerfile: docker/Dockerfile.cuda128
+Dockerfile: docker/Dockerfile
 ANOMALYGEN_PRODUCT_MODE: set | unset | failed validation
 Production code: non-writable | writable | failed validation
 Runtime paths: writable | failed validation

@@ -27,7 +27,7 @@ from imaginaire.utils import log
 from cosmos_predict2.data.anomaly_gen.anomaly_dataset import _preprocess, ANOMALY_TEXT_TEMPLATE
 from cosmos_predict2.inference.anomaly_gen.inference_anomaly_diffusion_utils import (
     _split_mask, compute_psnr_in_mask, tensor_to_pil_image, _postprocess as _postprocess_single_view,
-    count_mask_instances
+    count_mask_instances, _load_condition_image, _load_condition_mask
 )
 from cosmos_predict2.inference.anomaly_gen.mask_augmentation import get_crop_grid_by_ratio, augment_binary_mask
 from cosmos_predict2.inference.anomaly_gen.crop_paste import apply_CP_flow, paste_back, full_image_crop
@@ -244,6 +244,40 @@ def _split_union_mask_for_multiview(masks, max_k, sample_name="unknown"):
     return union_instance_masks, view_intersection_masks
 
 
+def _apply_multiview_image_guardrail(model, reconstructed_videos):
+    """Run the image content-safety guardrail on each generated multi-view image.
+
+    `reconstructed_videos` is a [num_views][B] nested list of PIL images. Any
+    image flagged unsafe is replaced in place with a black image. Returns a
+    [num_views][B] nested list of per-image safe verdicts. If the guardrail is
+    disabled/unavailable, every image is treated as safe and left untouched.
+    """
+    runner = getattr(getattr(model, "pipe", None), "image_guardrail_runner", None)
+    if runner is None:
+        return [[True] * len(view) for view in reconstructed_videos]
+
+    from cosmos_predict2.auxiliary.guardrail.common import presets as guardrail_presets
+
+    safe_flags = []
+    num_unsafe = 0
+    for view_idx, view_images in enumerate(reconstructed_videos):
+        view_flags = []
+        for i, image in enumerate(view_images):
+            is_safe = guardrail_presets.run_image_guardrail(image, runner)
+            view_flags.append(is_safe)
+            if not is_safe:
+                num_unsafe += 1
+                if isinstance(image, Image.Image):
+                    reconstructed_videos[view_idx][i] = Image.new(image.mode, image.size)
+        safe_flags.append(view_flags)
+    if num_unsafe:
+        log.critical(
+            f"Image guardrail flagged {num_unsafe} generated multi-view image(s) as unsafe; "
+            "replaced with black image(s)."
+        )
+    return safe_flags
+
+
 def inpaint_multiview_image(inpaint_condition, model):
     """
     Multi-view version of inpaint_image with full crop-and-paste support.
@@ -310,7 +344,10 @@ def inpaint_multiview_image(inpaint_condition, model):
                 seed=inpaint_condition.seed,
                 num_steps=inpaint_condition.num_steps,
                 is_negative_prompt=("neg_t5_text_embeddings" in diffusion_data_batch),
-                n_sample=1  # Multi-view doesn't support multiple samples yet
+                # n_sample is ignored by the pipe (it derives the count from the batch dim,
+                # which the MultiViewAnomalyInpaintCondition B*N duplication already sets);
+                # passed only for API parity with the single-view path.
+                n_sample=inpaint_condition.num_generated_images,
             )
             if dist.is_initialized():
                 dist.barrier()
@@ -318,7 +355,12 @@ def inpaint_multiview_image(inpaint_condition, model):
             reconstructed_videos = _postprocess_multiview(inpaint_condition, diffusion_data_batch)
             prev_reconstructed_videos = reconstructed_videos
             prev_batch = diffusion_data_batch
-    
+
+    # Post-generation image guardrail (per view, per sample). Unsafe images are
+    # replaced with a black image; the per-image verdict is recorded on
+    # inpaint_condition.guardrail_safe as a [num_views][B] nested list.
+    inpaint_condition.guardrail_safe = _apply_multiview_image_guardrail(model, reconstructed_videos)
+
     # Calculate PSNR for each view
     # Note: For multi-view, when crop_and_paste=False, we need to resize reconstructed_videos
     # to match original_images size, since reconstructed_videos are 512x512 (model output)
@@ -405,10 +447,34 @@ def _prepare_multiview_diffusion_inference_data_batches(inpaint_condition, model
             mask_filenames = [mask_filenames] * num_views
         elif len(mask_filenames) == 1:
             mask_filenames = mask_filenames * num_views
-        
-        # Load multi-view images and masks
-        images = [Image.open(path) for path in image_filenames]
-        masks = [Image.open(path).convert("L") for path in mask_filenames]
+
+        # Load multi-view images and masks — prefer the dataset's preloaded
+        # (binarized) arrays so inference receives clean binary masks, mirroring
+        # the single-view path; fall back to reading from disk when absent.
+        loaded_image_arrays = inpaint_condition.loaded_image_array[idx]
+        loaded_image_modes = inpaint_condition.loaded_image_mode[idx]
+        loaded_mask_arrays = inpaint_condition.loaded_mask_array[idx]
+        loaded_mask_modes = inpaint_condition.loaded_mask_mode[idx]
+        # Keep preloaded masks aligned with the (possibly replicated) mask list.
+        if loaded_mask_arrays is not None and len(loaded_mask_arrays) == 1 and len(mask_filenames) > 1:
+            loaded_mask_arrays = loaded_mask_arrays * len(mask_filenames)
+            loaded_mask_modes = (loaded_mask_modes * len(mask_filenames)) if loaded_mask_modes is not None else None
+        images = [
+            _load_condition_image(
+                image_filenames[v],
+                loaded_image_arrays[v] if loaded_image_arrays is not None else None,
+                loaded_image_modes[v] if loaded_image_modes is not None else None,
+            )
+            for v in range(len(image_filenames))
+        ]
+        masks = [
+            _load_condition_mask(
+                mask_filenames[v],
+                loaded_mask_arrays[v] if loaded_mask_arrays is not None else None,
+                loaded_mask_modes[v] if loaded_mask_modes is not None else None,
+            )
+            for v in range(len(mask_filenames))
+        ]
         
         # Verify all sizes match
         for i in range(num_views):

@@ -7,11 +7,11 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `anomalygen-release`
-- Evaluation date: 2026-05-30
+- Evaluation date: 2026-07-12
 - NVSkills-Eval profile: `external`
-- Environment: `local`
+- Environment: `astra-sandbox`
 - Dataset: 1 evaluation tasks
-- Attempts per task: 2
+- Attempts per task: 1
 - Pass threshold: 50%
 - Overall verdict: PASS
 
@@ -54,34 +54,26 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 82% (+9%) | 71% (+12%) |
-| Discoverability | 2 | 85% (+15%) | 50% (-12%) |
-| Effectiveness | 2 | 79% (+33%) | 55% (+24%) |
-| Efficiency | 2 | 73% (+22%) | 36% (-15%) |
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+75%) | 88% (+62%) |
+| Discoverability | 1 | 83% (+33%) | 75% (+30%) |
+| Effectiveness | 1 | 80% (+76%) | 76% (+72%) |
+| Efficiency | 1 | 60% (+5%) | 69% (+20%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 
 ## Tier 1: Static Validation Summary
 
-Tier 1 validation passed with observations. NVSkills-Eval ran 9 checks and found 9 total findings.
+Tier 1 validation passed with observations. NVSkills-Eval ran 1 checks and found 2 total findings.
 
 Top findings:
 
-- MEDIUM QUALITY/quality_correctness: No documented scripts in table format (`skills/anomalygen-release/SKILL.md`)
-- MEDIUM QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/anomalygen-release/SKILL.md`)
 - MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/anomalygen-release/SKILL.md`)
 - MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/anomalygen-release/SKILL.md`)
-- LOW QUALITY/quality_discoverability: Description very long (279 chars, recommend 50-150) (`skills/anomalygen-release/SKILL.md`)
 
 ## Tier 2: Deduplication Summary
 
-Tier 2 validation passed. NVSkills-Eval ran 2 checks and found 0 total findings.
-
-Notable observations:
-
-- Context Deduplication: Collected 4 file(s)
-- Inter-Skill Deduplication: Parsed skill 'anomalygen-release': 279 char description
+This tier was not run or did not produce findings in this report.
 
 ## Publication Recommendation
 

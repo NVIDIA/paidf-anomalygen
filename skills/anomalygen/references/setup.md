@@ -10,8 +10,8 @@ running setup for the first time.
 - `cosmos-predict2` conda env active. The scripts do **not** create it.
 - `HF_TOKEN` exported (Hugging Face access token — required for the
   `nvidia/Cosmos-Predict2-*` repos, which are gated).
-- `huggingface_hub` and `huggingface-cli` installed (already in the env per
-  the tutorial). If missing: `pip install -U huggingface_hub`.
+- `huggingface_hub >= 1.x` installed, which provides the `hf` CLI (already in
+  the env per the tutorial). If missing: `pip install -U huggingface_hub`.
 
 ---
 
@@ -40,7 +40,7 @@ ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh \
 
 What the script does:
 - Refuses to start if `HF_TOKEN` is unset.
-- Runs `huggingface-cli login --token $HF_TOKEN --add-to-git-credential` once
+- Runs `hf auth login --token $HF_TOKEN --add-to-git-credential` once
   before invoking the in-repo `scripts.download_checkpoints` module.
 - Skips the upstream module entirely when every artifact it would produce is
   already on disk (avoids redownloading NVDINOV2 via wget).
@@ -67,6 +67,6 @@ ${ANOMALYGEN_SCRIPTS}/check.sh \
 | "HF_TOKEN unset" on start | `export HF_TOKEN=<your_token>` |
 | HF 401 Unauthorized | Re-issue token at https://huggingface.co/settings/tokens with read access; accept license on each `nvidia/Cosmos-Predict2-*` model page |
 | Disk full mid-download | ~140 GB required; free space or use `--checkpoint-dir` on a larger volume |
-| `huggingface-cli: command not found` | `pip install -U huggingface_hub` |
+| `hf: command not found` | `pip install -U huggingface_hub` (needs `>= 1.x`) |
 | NVDINOV2 redownloading every run | Confirm `check.sh` exits 0; skip logic checks artifact presence before invoking the module |
 | SAM2 / Qwen3-VL downloading again | Delete the partial file and re-run |

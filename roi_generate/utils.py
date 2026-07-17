@@ -135,7 +135,12 @@ def generate_augmented_variants(
     variants, metadata = [], []
     interp = cv2.INTER_NEAREST if is_mask else cv2.INTER_LINEAR
     for i, base in enumerate(base_images):
-        seen_xforms, seen_hashes = set(), set()
+        # Dedup on the canonical transform key ONLY. The image-crop and
+        # mask-crop invocations must stay index-aligned (HOGFilteringStage
+        # zips their outputs); content-hash dedup collapses variants of a
+        # symmetric mask that its image does not collapse, desynchronizing
+        # the two lists.
+        seen_xforms = set()
         for deg in rotation_degrees:
             M = cv2.getRotationMatrix2D((base.shape[1] / 2, base.shape[0] / 2), deg, 1.0)
             rotated = cv2.warpAffine(base, M, (base.shape[1], base.shape[0]), flags=interp, borderValue=0)
@@ -156,12 +161,7 @@ def generate_augmented_variants(
                     if is_mask:
                         aug = (aug > 127).astype(np.uint8) * 255
 
-                    hsh = hashlib.sha1(aug.tobytes()).hexdigest()
-                    if hsh in seen_hashes:
-                        continue
-
                     seen_xforms.add(key)
-                    seen_hashes.add(hsh)
                     variants.append(aug)
                     metadata.append(
                         {

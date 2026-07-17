@@ -18,7 +18,6 @@ import torch
 from torchvision import transforms
 import torch.nn.functional as F
 import torch.nn as nn
-import secrets
 import numpy as np
 from PIL import Image
 
@@ -52,7 +51,7 @@ class RandomRotation(object):
         self.max_angle = max_angle
 
     def __call__(self, image, target=None):
-        random_angle = secrets.randbelow(self.max_angle)
+        random_angle = secure_randint(-self.max_angle, self.max_angle)
         image = tF.rotate(image, random_angle,
                           interpolation=transforms.InterpolationMode.BILINEAR)
         if target is not None:
@@ -120,8 +119,8 @@ class Random_Transform(object):
 
         x1, x2 = x[:, 1].min(), x[:, 1].max()
         y1, y2 = x[:, 2].min(), x[:, 2].max()
-        crop_x1 = secrets.randbelow(x1)
-        crop_y1 = secrets.randbelow(y1)
+        crop_x1 = secure_randint(0, x1 - 1)
+        crop_y1 = secure_randint(0, y1 - 1)
         crop_x2 = secure_randint(x2, image.size(-1))
         crop_y2 = secure_randint(y2, image.size(-1))
 

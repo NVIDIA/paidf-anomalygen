@@ -7,11 +7,11 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `anomalygen-guard`
-- Evaluation date: 2026-05-30
+- Evaluation date: 2026-07-12
 - NVSkills-Eval profile: `external`
-- Environment: `local`
+- Environment: `astra-sandbox`
 - Dataset: 3 evaluation tasks
-- Attempts per task: 2
+- Attempts per task: 1
 - Pass threshold: 50%
 - Overall verdict: PASS
 
@@ -54,34 +54,26 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 6 | 100% (+0%) | 100% (+0%) |
-| Correctness | 6 | 58% (-11%) | 93% (+13%) |
-| Discoverability | 6 | 33% (-11%) | 81% (+19%) |
-| Effectiveness | 6 | 58% (-3%) | 86% (+14%) |
-| Efficiency | 6 | 45% (-0%) | 72% (+17%) |
+| Security | 3 | 100% (+0%) | 100% (+0%) |
+| Correctness | 3 | 77% (+43%) | 97% (+57%) |
+| Discoverability | 3 | 67% (+50%) | 97% (+54%) |
+| Effectiveness | 3 | 77% (+43%) | 85% (+56%) |
+| Efficiency | 3 | 70% (+45%) | 93% (+46%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 
 ## Tier 1: Static Validation Summary
 
-Tier 1 validation passed with observations. NVSkills-Eval ran 9 checks and found 13 total findings.
+Tier 1 validation passed with observations. NVSkills-Eval ran 1 checks and found 2 total findings.
 
 Top findings:
 
-- MEDIUM PII/gps_coordinates: GPS coordinates (location information) (`SKILL.md:261`)
-- MEDIUM PII/gps_coordinates: GPS coordinates (location information) (`scripts/preflight.py:42`)
-- MEDIUM PII/gps_coordinates: GPS coordinates (location information) (`scripts/preflight.py:43`)
-- MEDIUM QUALITY/quality_correctness: No documented scripts in table format (`skills/anomalygen-guard/SKILL.md`)
-- MEDIUM QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/anomalygen-guard/SKILL.md`)
+- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/anomalygen-guard/SKILL.md`)
+- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/anomalygen-guard/SKILL.md`)
 
 ## Tier 2: Deduplication Summary
 
-Tier 2 validation passed. NVSkills-Eval ran 2 checks and found 0 total findings.
-
-Notable observations:
-
-- Context Deduplication: Collected 2 file(s)
-- Inter-Skill Deduplication: Parsed skill 'anomalygen-guard': 264 char description
+This tier was not run or did not produce findings in this report.
 
 ## Publication Recommendation
 

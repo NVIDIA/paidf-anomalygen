@@ -386,6 +386,59 @@ predict2_anomaly_gen_multiview_fsdp_2b = dict(
     ),
 )
 
+# Multi-view anomaly gen 2B with DDP + CUDA graphs (Video2World based)
+predict2_anomaly_gen_multiview_ddp_2b = dict(
+    defaults=[
+        {"override /model": "predict2_anomaly_gen_multiview_ddp_2b"},
+        {"override /optimizer": "fusedadamw"},
+        {"override /ckpt_type": "standard"},
+        {"override /scheduler": "lambdalinear"},
+        "_self_",
+    ],
+    model=dict(
+        config=dict(
+            fsdp_shard_size=0,
+            pipe_config=dict(guardrail_config=dict(enabled=False)),
+        )
+    ),
+    optimizer=dict(
+        lr=1e-2,
+        weight_decay=1e-6,
+        betas=[0.9, 0.99],
+        eps=1e-10,
+    ),
+    scheduler=dict(
+        f_max=[0.2],
+        f_min=[0.1],
+        warm_up_steps=[1_000],
+        cycle_lengths=[100_000],
+    ),
+    job=dict(
+        project="posttraining",
+        group="anomaly_gen_multiview",
+        name="2b_anomaly_gen_multiview_ddp",
+    ),
+    model_parallel=dict(
+        context_parallel_size=1,
+    ),
+    dataloader_train=dataloader_train_anomaly,
+    dataloader_val=dataloader_val_anomaly,
+    trainer=dict(
+        distributed_parallelism="ddp",
+        ddp=dict(
+            find_unused_parameters=True,
+            static_graph=False,
+            broadcast_buffers=True,
+        ),
+        callbacks=dict(
+            iter_speed=dict(hit_thres=200),
+        ),
+    ),
+    checkpoint=dict(
+        save_iter=200,
+    ),
+)
+
 # Multi-view anomaly gen 14B (Video2World based)
 predict2_anomaly_gen_multiview_fsdp_14b = dict(
     defaults=[
@@ -446,6 +499,60 @@ predict2_anomaly_gen_multiview_fsdp_14b = dict(
 )
 
 
+# Multi-view anomaly gen 14B with DDP + CUDA graphs (Video2World based)
+predict2_anomaly_gen_multiview_ddp_14b = dict(
+    defaults=[
+        {"override /model": "predict2_anomaly_gen_multiview_ddp_14b"},
+        {"override /optimizer": "fusedadamw"},
+        {"override /ckpt_type": "standard"},
+        {"override /scheduler": "lambdalinear"},
+        "_self_",
+    ],
+    model=dict(
+        config=dict(
+            fsdp_shard_size=0,
+            pipe_config=dict(guardrail_config=dict(enabled=False)),
+        )
+    ),
+    optimizer=dict(
+        lr=1e-2,
+        weight_decay=1e-6,
+        betas=[0.9, 0.99],
+        eps=1e-10,
+    ),
+    scheduler=dict(
+        f_max=[0.2],
+        f_min=[0.1],
+        warm_up_steps=[1_000],
+        cycle_lengths=[100_000],
+    ),
+    model_parallel=dict(
+        context_parallel_size=1,
+    ),
+    job=dict(
+        project="posttraining",
+        group="anomaly_gen_multiview",
+        name="14b_anomaly_gen_multiview_ddp",
+    ),
+    dataloader_train=dataloader_train_anomaly,
+    dataloader_val=dataloader_val_anomaly,
+    trainer=dict(
+        max_iter=200000,
+        distributed_parallelism="ddp",
+        ddp=dict(
+            find_unused_parameters=True,
+            static_graph=False,
+            broadcast_buffers=True,
+        ),
+        callbacks=dict(
+            iter_speed=dict(hit_thres=200),
+        ),
+    ),
+    checkpoint=dict(
+        save_iter=200,
+    ),
+)
+
 for _item in [
     # 2b, anomaly generation (single-view)
     predict2_anomaly_gen_fsdp_2b,
@@ -457,8 +564,12 @@ for _item in [
     predict2_anomaly_gen_ddp_14b,
     # 2b, multi-view anomaly generation (Video2World)
     predict2_anomaly_gen_multiview_fsdp_2b,
+    # 2b, multi-view anomaly generation with DDP + CUDA graphs (Video2World)
+    predict2_anomaly_gen_multiview_ddp_2b,
     # 14b, multi-view anomaly generation (Video2World)
     predict2_anomaly_gen_multiview_fsdp_14b,
+    # 14b, multi-view anomaly generation with DDP + CUDA graphs (Video2World)
+    predict2_anomaly_gen_multiview_ddp_14b,
 ]:
     # Get the experiment name from the global variable, e.g. exp01_wan_lora -> experiment_name = "exp01_wan_lora"
     experiment_name = [name.lower() for name, value in globals().items() if value is _item][0]

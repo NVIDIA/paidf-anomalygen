@@ -13,9 +13,6 @@ trainer:
   logging_iter: 10
   validation_iter: 2000
   run_validation: True  # Disable validation for initial testing
-  callbacks:
-    log_image:
-      every_n: 237  # Prime number for diverse sampling
 scheduler:
   warm_up_steps: 
     - 50

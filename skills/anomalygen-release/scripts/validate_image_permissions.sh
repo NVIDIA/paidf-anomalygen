@@ -52,9 +52,18 @@ if [[ -z "${image:-}" ]]; then
     exit 2
 fi
 
-sudo docker image inspect "${image}" >/dev/null
+# Use sudo for docker only when the daemon isn't reachable as the current user
+if [[ -n "${DOCKER_SUDO+x}" ]]; then
+    SUDO="${DOCKER_SUDO}"
+elif docker info >/dev/null 2>&1; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
 
-sudo docker run --rm -e "VALIDATION_MODE=${mode}" "${image}" bash -lc '
+${SUDO} docker image inspect "${image}" >/dev/null
+
+${SUDO} docker run --rm -e "VALIDATION_MODE=${mode}" "${image}" bash -lc '
 set -euo pipefail
 
 root="/workspace/paidf-anomalygen"
@@ -97,12 +106,16 @@ fi
 
 production_paths=(
     "${root}/cosmos_predict2"
+    "${root}/imaginaire"
+    "${root}/automatic_mask_placement"
+    "${root}/pseudo_label"
+    "${root}/roi_generate"
     "${root}/scripts/anomaly_gen"
     "${root}/scripts/utilities"
-    "${root}/.agents/skills"
+    "${root}/skills"
     "${root}/README.md"
     "${root}/CLAUDE.md"
-    "${root}/cosmos-predict2-cuda128.yaml"
+    "${root}"/cosmos-predict2-cuda*.yaml
     "${root}"/docker/Dockerfile*
     "${root}"/requirements*.txt
 )
@@ -153,7 +166,7 @@ nested_write_targets=(
     "${root}/results/anomaly_gen/_permission_test/checkpoints/model"
     "${root}/results/_permission_test/original/reconstructed_image"
     "${root}/results/_permission_test/original/original_mask"
-    "${root}/results/_permission_test/original/overlay_image"
+    "${root}/results/_permission_test/original/annotated_image"
     "${root}/results/_permission_test/searched/reconstructed_image"
     "${root}/results/_permission_test/rounds/round_001/sdg/reconstructed_image"
     "${root}/ag_inference/_permission_test/amp"

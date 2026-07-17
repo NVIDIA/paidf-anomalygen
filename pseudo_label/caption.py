@@ -83,12 +83,15 @@ class Captioner:
         """Post-process the response to ensure it matches the number of bboxes."""
         start_tag = "<answer>"
         end_tag = "</answer>"
-        try:
-            start_index = response.find(start_tag) + len(start_tag)
-            end_index = response.rfind(end_tag)
-            content = response[start_index:end_index].strip()
-        except (ValueError, IndexError):
+        # str.find / rfind return -1 when the tag is absent (they never raise),
+        # so guard explicitly instead of relying on a dead try/except. Without
+        # this, a response lacking the tags produced a corrupted slice
+        # (response[-1 + len(start_tag) : -1]) rather than falling back to raw.
+        start_pos = response.find(start_tag)
+        end_pos = response.rfind(end_tag)
+        if start_pos == -1 or end_pos == -1 or end_pos < start_pos + len(start_tag):
             return response
+        content = response[start_pos + len(start_tag):end_pos].strip()
         # The delimiter is a blank line followed by the bolded "Anomaly " text
         delimiter = "\n\n**Anomaly "
         parts = content.split(delimiter)

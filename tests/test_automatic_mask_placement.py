@@ -1633,6 +1633,82 @@ def test_amp_pipeline(
         assert coverage == 1.0, f"{description}: Mask not fully within ROI: coverage={coverage:.2f}"
 
 
+# =============================================================================
+# CADParser (cad2roi) — color-key parsing safety
+# =============================================================================
+
+def test_cadparser_parses_valid_color_keys_and_rejects_non_literal(tmp_path):
+    """CADParser parses tuple / paren-less color keys, and rejects a non-literal
+    key with a clean ValueError instead of eval()-executing it (RCE regression)."""
+    from automatic_mask_placement.cad2roi.parser import CADParser
+
+    valid = tmp_path / "valid.json"
+    valid.write_text(json.dumps({
+        "(255, 0, 0, 255)": {"class": "pad"},        # tuple literal
+        "255,0,0,255": {"class": "solder"},          # bare comma -> tuple
+        "(0, 0, 0, 255)": {"class": "BACKGROUND"},   # skipped by parser
+    }))
+    parser = CADParser(str(valid))
+    assert set(parser.class_names) == {"pad", "solder"}
+    np.testing.assert_array_equal(parser.color_map["pad"], np.array([255, 0, 0], dtype=np.float32))
+    np.testing.assert_array_equal(parser.color_map["solder"], np.array([255, 0, 0], dtype=np.float32))
+
+    # A non-literal key must be rejected, not executed (the old eval() would run it).
+    malicious = tmp_path / "malicious.json"
+    malicious.write_text(json.dumps({"__import__('os').system('echo pwned')": {"class": "pad"}}))
+    with pytest.raises(ValueError):
+        CADParser(str(malicious))
+
+    # A valid-but-wrong-type literal (set / scalar) parses fine but is not an
+    # (r, g, b) sequence -> must raise a clean ValueError here, not a cryptic
+    # TypeError later at rgba[:3].
+    for bad_key in ("{1, 2, 3}", "5"):
+        wrong_type = tmp_path / "wrong_type.json"
+        wrong_type.write_text(json.dumps({bad_key: {"class": "pad"}}))
+        with pytest.raises(ValueError):
+            CADParser(str(wrong_type))
+
+
+# =============================================================================
+# Bridge ROI (cad2roi.defects) — group chaining order
+# =============================================================================
+
+def test_bridge_chains_groups_along_principal_axis(monkeypatch):
+    """_try_bridge_roi chains grouped joints along their principal spatial axis,
+    so a vertical triple with x-jitter connects in monotonic order (the old
+    lexicographic (x, y) sort would zig-zag). Tests the real code path by
+    recording the consecutive gap-fill pairs."""
+    from automatic_mask_placement.cad2roi.defects import bridge
+    from automatic_mask_placement.cad2roi.parser import ROICandidate
+
+    h = w = 16
+
+    def _grp(cx, cy):
+        m = np.zeros((h, w), dtype=np.uint8)
+        yi, xi = int(round(cy)), int(round(cx))
+        m[yi:yi + 2, xi:xi + 2] = 255
+        return ROICandidate(mask=m, bbox=(xi, yi, 2, 2), centroid=(float(cx), float(cy)), area=4)
+
+    # Vertical column with x-jitter: y = 10, 0, 5 at indices 0, 1, 2.
+    groups = [_grp(0, 10), _grp(1, 0), _grp(0, 5)]
+
+    chain = []
+    monkeypatch.setattr(
+        bridge, "_fill_gap_between",
+        lambda merged, ga, gb, shape: (chain.append((ga.centroid, gb.centroid)) or merged),
+    )
+    bridge._try_bridge_roi(
+        [0, 1, 2], groups,
+        np.zeros((h, w), dtype=np.uint8), np.zeros((h, w), dtype=np.uint8),
+        (h, w), fill_gap=True, bridge_max_cut_ratio=0.5,
+    )
+
+    # Reconstruct the visited y-order from the consecutive gap-fill pairs.
+    assert len(chain) == 2
+    ys = [chain[0][0][1]] + [b[1] for _, b in chain]
+    assert ys == sorted(ys) or ys == sorted(ys, reverse=True), f"chain not monotonic: {ys}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

@@ -36,10 +36,18 @@ def keep_largest_and_fill(u8):
     lbl = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
     mask = (labels == lbl).astype(np.uint8)
     h, w = mask.shape
-    flood = mask.copy()
-    pad = np.zeros((h + 2, w + 2), np.uint8)
-    cv2.floodFill(flood, pad, (0, 0), 1)
-    mask[flood == 0] = 1
+    # Flood the background inward from a guaranteed-background 1px border. If we
+    # seeded the flood at (0, 0) of the mask itself and the kept object touched
+    # the top-left corner, the seed would land on foreground, the background
+    # would never be flooded, and mask[flood == 0] = 1 would turn the whole
+    # frame white. Padding with a zero border makes the corner always background.
+    canvas = np.zeros((h + 2, w + 2), np.uint8)
+    canvas[1:-1, 1:-1] = mask
+    ff_buf = np.zeros((h + 4, w + 4), np.uint8)
+    cv2.floodFill(canvas, ff_buf, (0, 0), 1)
+    # After the flood, exterior background == 1 and only truly-enclosed holes
+    # remain 0; fill those holes back into the object.
+    mask[canvas[1:-1, 1:-1] == 0] = 1
     return (mask * 255).astype(np.uint8)
 
 

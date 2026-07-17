@@ -104,6 +104,18 @@ class MeanIoUMeter:
         pred_label = pred_label[mask]
         label = label[mask]
 
+        # Values outside [0, num_classes) make np.bincount(minlength=num_classes)
+        # return an array longer than num_classes; area_pred + area_label -
+        # area_intersect then fails to broadcast mid-accumulation. Surface a
+        # clear error instead of a cryptic broadcast crash.
+        for name, arr in (("pred_label", pred_label), ("label", label)):
+            if arr.size and (arr.min() < 0 or arr.max() >= num_classes):
+                raise ValueError(
+                    f"{name} contains values outside [0, {num_classes}) "
+                    f"(min={int(arr.min())}, max={int(arr.max())}); "
+                    "clip/remap labels or increase num_classes."
+                )
+
         intersect = pred_label[pred_label == label]
         area_intersect = np.bincount(intersect, minlength=num_classes)
         area_pred_label = np.bincount(pred_label, minlength=num_classes)

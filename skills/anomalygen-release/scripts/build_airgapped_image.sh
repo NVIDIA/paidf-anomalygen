@@ -16,12 +16,18 @@
 #
 # Build an AnomalyGen air-gapped Docker image (checkpoints baked in).
 # Checks for required checkpoints and downloads any that are missing before
-# building from docker/Dockerfile.cuda128.airgapped.
+# building the airgapped-{product,develop} target of docker/Dockerfile.
+# Checkpoints are passed via a named build context (`ckpts`) so they bypass
+# the repo .dockerignore (which excludes checkpoints/ for thin builds).
 #
 # Usage:
 #   build_airgapped_image.sh [--mode product|develop] [--tag TAG]
 #                            [--checkpoint-dir checkpoints]
+#                            [--dockerfile docker/Dockerfile]
 #                            [--skip-download]
+#
+# Use --dockerfile docker/Dockerfile.arm.cuda130 to build the arm64 / CUDA-13
+# air-gapped image instead of the default x86 / CUDA-12.8 one.
 set -euo pipefail
 
 mode="product"
@@ -29,19 +35,21 @@ tag="$(date -u +%Y%m%d)"
 ckpt_dir="checkpoints"
 skip_download=0
 image_name=""
-dockerfile="docker/Dockerfile.cuda128.airgapped"
+dockerfile="docker/Dockerfile"
 
 usage() {
     cat <<'EOF'
 Usage:
   build_airgapped_image.sh [--mode product|develop] [--tag TAG]
                            [--checkpoint-dir checkpoints]
+                           [--dockerfile docker/Dockerfile]
                            [--skip-download]
 
 Defaults:
   --mode product
   --tag current UTC date (YYYYMMDD)
   --checkpoint-dir checkpoints
+  --dockerfile docker/Dockerfile  (use docker/Dockerfile.arm.cuda130 for arm64/CUDA-13)
   --skip-download  off (auto-downloads missing checkpoints)
 
 Product images set ANOMALYGEN_PRODUCT_MODE=1 and lock production code.
@@ -61,6 +69,7 @@ while [[ $# -gt 0 ]]; do
         --mode)           mode="$2";         shift 2;;
         --tag)            tag="$2";          shift 2;;
         --checkpoint-dir) ckpt_dir="$2";     shift 2;;
+        --dockerfile)     dockerfile="$2";   shift 2;;
         --skip-download)  skip_download=1;   shift;;
         --image-name)     image_name="$2";   shift 2;;
         -h|--help)        usage; exit 0;;
@@ -150,7 +159,7 @@ if [[ "${missing}" -gt 0 ]]; then
     echo "=== re-checking checkpoints after download ==="
     # Re-run the checks; abort if still missing (e.g. download failed).
     bash "$0" --mode "${mode}" --tag "${tag}" --checkpoint-dir "${ckpt_dir}" \
-        --image-name "${image_name}" --skip-download
+        --dockerfile "${dockerfile}" --image-name "${image_name}" --skip-download
     exit $?
 fi
 
@@ -158,6 +167,15 @@ echo
 echo "all required checkpoints present."
 
 # ── Docker build ───────────────────────────────────────────────────────────────
+# Use sudo for docker only when the daemon isn't reachable as the current user.
+if [[ -n "${DOCKER_SUDO+x}" ]]; then
+    SUDO="${DOCKER_SUDO}"
+elif docker info >/dev/null 2>&1; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 image="${image_name}:${tag}"
 echo
 echo "=== building ${mode} air-gapped image: ${image} ==="
@@ -165,10 +183,12 @@ echo "    dockerfile: ${dockerfile}"
 echo "    checkpoint size: $(du -sh "${ckpt_dir}" 2>/dev/null | cut -f1 || echo 'unknown')"
 echo "    expected image size: ~75 GB+"
 echo
-echo "sudo DOCKER_BUILDKIT=1 docker build --target ${mode} -f ${dockerfile} -t ${image} ."
+echo "${SUDO:+${SUDO} }DOCKER_BUILDKIT=1 docker buildx build --load --target airgapped-${mode} --build-context ckpts=${ckpt_dir} -f ${dockerfile} -t ${image} ."
 
-sudo DOCKER_BUILDKIT=1 docker build \
-    --target "${mode}" \
+${SUDO} DOCKER_BUILDKIT=1 docker buildx build \
+    --load \
+    --target "airgapped-${mode}" \
+    --build-context "ckpts=${ckpt_dir}" \
     -f "${dockerfile}" \
     -t "${image}" \
     .
@@ -176,4 +196,4 @@ sudo DOCKER_BUILDKIT=1 docker build \
 echo
 echo "=== built ${mode} air-gapped image: ${image} ==="
 echo "    Run (no volume mounts needed):"
-echo "    sudo docker run --gpus all -it --rm --shm-size=16g ${image} bash"
+echo "    ${SUDO:+${SUDO} }docker run --gpus all -it --rm --shm-size=16g ${image} bash"

@@ -12,10 +12,7 @@ trainer:
   max_iter: 150000  # Small number for testing with 2 samples
   logging_iter: 10
   validation_iter: 2000
-  run_validation: False  # Disable validation for initial testing
-  callbacks:
-    log_image:
-      every_n: 237  # Prime number, not divisible by 40 (epoch length)
+  run_validation: True
 scheduler:
   warm_up_steps: 
     - 50

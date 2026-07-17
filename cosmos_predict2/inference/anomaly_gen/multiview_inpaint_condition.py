@@ -14,7 +14,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 from imaginaire.utils import log
 
 @dataclass
@@ -53,6 +53,11 @@ class MultiViewAnomalyInpaintCondition:
     PSNR: Union[float, List[float]] = None
     # Index
     index: Union[int, List[int]] = None
+    # Optional preloaded data for DataLoader worker prefetch (per-sample, per-view lists)
+    loaded_image_array: Optional[Union[Any, List[Any]]] = None
+    loaded_image_mode: Union[None, str, List[Optional[str]]] = None
+    loaded_mask_array: Optional[Union[Any, List[Any]]] = None
+    loaded_mask_mode: Union[None, str, List[Optional[str]]] = None
 
     def __post_init__(self):
         """
@@ -94,6 +99,16 @@ class MultiViewAnomalyInpaintCondition:
         self.poisson_blend = to_list(self.poisson_blend)
         self.PSNR = to_list(self.PSNR)
         self.index = to_list(self.index)
+
+        def to_optional_list(value):
+            if value is None:
+                return [None] * B
+            return [value] if not isinstance(value, list) else value
+
+        self.loaded_image_array = to_optional_list(self.loaded_image_array)
+        self.loaded_image_mode = to_optional_list(self.loaded_image_mode)
+        self.loaded_mask_array = to_optional_list(self.loaded_mask_array)
+        self.loaded_mask_mode = to_optional_list(self.loaded_mask_mode)
 
         def parse_shift_value(s):
             if isinstance(s, tuple):
@@ -140,8 +155,30 @@ class MultiViewAnomalyInpaintCondition:
         if len(self.shift_values) != B or len(self.rotation_angle) != B or len(self.morph_operation) != B:
             raise ValueError(f"The number of shift_values {len(self.shift_values)}, rotation_angle {len(self.rotation_angle)}, and morph_operation {len(self.morph_operation)} must match {B}")
 
-        # Check if num_generated_images is 1 for multi-view (we don't support multiple generations yet)
+        # Duplicate per-sample conditions for multiple generations (same condition, different latents).
+        # Mirrors the single-view AnomalyInpaintCondition path: the outer B axis is the free
+        # "sample" axis (each element carries its own nested per-view lists), so multiplying the
+        # outer lists by N expands B -> B*N. Each duplicate gets a different noise slice in the pipe
+        # (arch_invariant_rand fills the whole (B*N, ...) tensor), yielding N distinct generations.
+        # Scalars (guidance / seed / num_steps / iteration_generation_max_instance) are shared.
         if self.num_generated_images > 1:
-            log.warning("Multi-view does not fully support num_generated_images > 1. Setting to 1.")
-            self.num_generated_images = 1
+            n = self.num_generated_images
+            log.info(f"Generating {n} images per multi-view sample (duplicating conditions)")
+            self.image_filenames = self.image_filenames * n
+            self.mask_filename = self.mask_filename * n
+            self.anomaly_type = self.anomaly_type * n
+            self.crop_and_paste = self.crop_and_paste * n
+            self.crop_grid_X = self.crop_grid_X * n
+            self.crop_grid_Y = self.crop_grid_Y * n
+            self.crop_ratio = self.crop_ratio * n
+            self.poisson_blend = self.poisson_blend * n
+            self.shift_values = self.shift_values * n
+            self.rotation_angle = self.rotation_angle * n
+            self.morph_operation = self.morph_operation * n
+            self.PSNR = self.PSNR * n
+            self.index = self.index * n
+            self.loaded_image_array = self.loaded_image_array * n
+            self.loaded_image_mode = self.loaded_image_mode * n
+            self.loaded_mask_array = self.loaded_mask_array * n
+            self.loaded_mask_mode = self.loaded_mask_mode * n
 

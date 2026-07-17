@@ -44,7 +44,8 @@ def main():
         if not pathlib.Path(entry["mask_filename"]).exists():
             print(f"error: missing mask {entry['mask_filename']}", file=sys.stderr); missing += 1; continue
 
-        img_w, img_h = Image.open(entry["image_filename"]).size
+        with Image.open(entry["image_filename"]) as im:
+            img_w, img_h = im.size
         with Image.open(entry["mask_filename"]) as m:
             if m.size == (img_w, img_h):
                 continue

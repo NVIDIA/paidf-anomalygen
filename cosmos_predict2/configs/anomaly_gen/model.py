@@ -48,7 +48,7 @@ PREDICT2_ANOMALY_GEN_FSDP_2B = dict(
             ),
             fsdp_shard_size=8,
             ag_config=L(LazyDict)(
-                ad_precision="bfloat16",
+                ad_precision="float32",
                 t5_model_name=None,
                 mask_encoder=L(LazyDict)(
                     encoder_type="nvdinov2",
@@ -107,7 +107,7 @@ PREDICT2_ANOMALY_GEN_DDP_2B = dict(
             compile_text_encoder=True,
             compile_mask_encoder=True,
             ag_config=L(LazyDict)(
-                ad_precision="bfloat16",
+                ad_precision="float32",
                 t5_model_name=None,
                 mask_encoder=L(LazyDict)(
                     encoder_type="nvdinov2",
@@ -157,7 +157,7 @@ PREDICT2_ANOMALY_GEN_FSDP_14B = dict(
             ),
             fsdp_shard_size=8,
             ag_config=L(LazyDict)(
-                ad_precision="bfloat16",
+                ad_precision="float32",
                 t5_model_name=None,
                 mask_encoder=L(LazyDict)(
                     encoder_type="nvdinov2",
@@ -216,7 +216,7 @@ PREDICT2_ANOMALY_GEN_DDP_14B = dict(
             compile_text_encoder=True,
             compile_mask_encoder=True,
             ag_config=L(LazyDict)(
-                ad_precision="bfloat16",
+                ad_precision="float32",
                 t5_model_name=None,
                 mask_encoder=L(LazyDict)(
                     encoder_type="nvdinov2",
@@ -271,7 +271,67 @@ PREDICT2_ANOMALY_GEN_MULTIVIEW_FSDP_2B = dict(
             ),
             fsdp_shard_size=8,
             ag_config=L(LazyDict)(
-                ad_precision="bfloat16",
+                ad_precision="float32",
+                t5_model_name=None,
+                mask_encoder=L(LazyDict)(
+                    encoder_type="nvdinov2",
+                    encoder_config=L(LazyDict)(
+                        pool_kernel=7,
+                        init_cfg=L(LazyDict)(
+                            checkpoint=None
+                        )
+                    ),
+                    freeze=True,
+                ),
+                adapter=L(LazyDict)(
+                    adapter_type="mlp_gelu",
+                    adapter_config=L(LazyDict)(
+                        num_layers=2,
+                        input_hidden_size=1024,
+                        final_hidden_size=1024
+                    ),
+                    freeze=False,
+                ),
+                anomaly_embedding=L(LazyDict)(
+                    num_tokens=256,
+                    token_dim=1024,
+                    init_word="abnormal",
+                    anomaly_types=None,
+                    freeze=False,
+                    perview_perturbation_std=0.01,
+                ),
+                text_tokenizer=L(LazyDict)(
+                    max_length=512,
+                ),
+            ),
+        ),
+        _recursive_=False,
+    ),
+)
+
+PREDICT2_ANOMALY_GEN_MULTIVIEW_DDP_2B = dict(
+    trainer=dict(
+        distributed_parallelism="ddp",
+        ddp=dict(
+            find_unused_parameters=True,
+            static_graph=False,
+            broadcast_buffers=True,
+        ),
+    ),
+    model=L(Predict2AnomalyGenMultiViewModel)(
+        config=Predict2AnomalyGenMultiViewModelConfig(
+            pipe_config=PREDICT2_ANOMALY_GEN_MULTIVIEW_PIPELINE_2B,
+            model_manager_config=L(Predict2MultiViewModelManagerConfig)(
+                dit_path="checkpoints/nvidia/Cosmos-Predict2-2B-Text2Image/model.pt",  # Use Text2Image checkpoint
+                text_encoder_path="",  # Do not load text encoder for training.
+            ),
+            fsdp_shard_size=0,
+            use_cuda_graphs_for_dit=True,
+            compile_vae_encoder=True,
+            compile_text_encoder=True,
+            compile_mask_encoder=True,
+            ag_config=L(LazyDict)(
+                ad_precision="float32",
                 t5_model_name=None,
                 mask_encoder=L(LazyDict)(
                     encoder_type="nvdinov2",
@@ -322,7 +382,68 @@ PREDICT2_ANOMALY_GEN_MULTIVIEW_FSDP_14B = dict(
             ),
             fsdp_shard_size=8,
             ag_config=L(LazyDict)(
-                ad_precision="bfloat16",
+                ad_precision="float32",
+                t5_model_name=None,
+                mask_encoder=L(LazyDict)(
+                    encoder_type="nvdinov2",
+                    encoder_config=L(LazyDict)(
+                        pool_kernel=7,
+                        init_cfg=L(LazyDict)(
+                            checkpoint=None
+                        )
+                    ),
+                    freeze=True,
+                ),
+                adapter=L(LazyDict)(
+                    adapter_type="mlp_gelu",
+                    adapter_config=L(LazyDict)(
+                        num_layers=2,
+                        input_hidden_size=1024,
+                        final_hidden_size=1024
+                    ),
+                    freeze=False,
+                ),
+                anomaly_embedding=L(LazyDict)(
+                    num_tokens=256,
+                    anomaly_types=None,
+                    token_dim=1024,
+                    init_word="abnormal",
+                    freeze=False,
+                    perview_perturbation_std=0.01,
+                ),
+                text_tokenizer=L(LazyDict)(
+                    max_length=512,
+                ),
+            ),
+        ),
+        _recursive_=False,
+    ),
+)
+
+
+PREDICT2_ANOMALY_GEN_MULTIVIEW_DDP_14B = dict(
+    trainer=dict(
+        distributed_parallelism="ddp",
+        ddp=dict(
+            find_unused_parameters=True,
+            static_graph=False,
+            broadcast_buffers=True,
+        ),
+    ),
+    model=L(Predict2AnomalyGenMultiViewModel)(
+        config=Predict2AnomalyGenMultiViewModelConfig(
+            pipe_config=PREDICT2_ANOMALY_GEN_MULTIVIEW_PIPELINE_14B,
+            model_manager_config=L(Predict2MultiViewModelManagerConfig)(
+                dit_path="checkpoints/nvidia/Cosmos-Predict2-14B-Text2Image/model.pt",  # Use Text2Image checkpoint
+                text_encoder_path="",  # Do not load text encoder for training.
+            ),
+            fsdp_shard_size=0,
+            use_cuda_graphs_for_dit=True,
+            compile_vae_encoder=True,
+            compile_text_encoder=True,
+            compile_mask_encoder=True,
+            ag_config=L(LazyDict)(
+                ad_precision="float32",
                 t5_model_name=None,
                 mask_encoder=L(LazyDict)(
                     encoder_type="nvdinov2",
@@ -383,7 +504,15 @@ def register_model() -> None:
     cs.store(
         group="model", package="_global_", name="predict2_anomaly_gen_multiview_fsdp_2b", node=PREDICT2_ANOMALY_GEN_MULTIVIEW_FSDP_2B
     )
+    # predict2 multi-view anomaly gen 2b model with DDP + CUDA graphs (Video2World based)
+    cs.store(
+        group="model", package="_global_", name="predict2_anomaly_gen_multiview_ddp_2b", node=PREDICT2_ANOMALY_GEN_MULTIVIEW_DDP_2B
+    )
     # predict2 multi-view anomaly gen 14b model (Video2World based)
     cs.store(
         group="model", package="_global_", name="predict2_anomaly_gen_multiview_fsdp_14b", node=PREDICT2_ANOMALY_GEN_MULTIVIEW_FSDP_14B
+    )
+    # predict2 multi-view anomaly gen 14b model with DDP + CUDA graphs (Video2World based)
+    cs.store(
+        group="model", package="_global_", name="predict2_anomaly_gen_multiview_ddp_14b", node=PREDICT2_ANOMALY_GEN_MULTIVIEW_DDP_14B
     )

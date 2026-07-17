@@ -17,7 +17,7 @@
 
 For each sample index, pick the attempt (original or any round) with the
 highest nn_score — NaN treated as "no score" — and copy that attempt's
-reconstructed_image / original_mask / overlay_image / original_image plus
+reconstructed_image / original_mask / annotated_image / original_image plus
 its SDG_result.csv row into --searched-dir. Also writes
 <rounds-dir>/search_summary.csv listing per-sample best_round / best params /
 best_nn_score / attempts.
@@ -101,14 +101,32 @@ def _load_per_sample_csv(csv_path, sdg_csv):
     return rows
 
 
+# annotated_image is written once per anomaly instance as "<stem>_<j>.png"
+# (see scripts/anomaly_gen/synthetic_dataset_generation.py), unlike the
+# single-file kinds. It must be globbed and copied per instance, not matched
+# 1:1 against the reconstructed-image basename.
+_MULTI_INSTANCE_KINDS = ("annotated_image",)
+
+
 def _copy_sample_outputs(src_dir, dst_dir, idx, basename):
     src_dir = pathlib.Path(src_dir); dst_dir = pathlib.Path(dst_dir)
     dst_name = f"idx{idx:06d}_{basename}"
-    for kind in ("reconstructed_image", "original_mask", "overlay_image", "original_image"):
-        src_f = src_dir / kind / basename
-        if src_f.exists():
-            (dst_dir / kind).mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_f, dst_dir / kind / dst_name)
+    stem = pathlib.Path(basename).stem
+    for kind in ("reconstructed_image", "original_mask", "annotated_image", "original_image"):
+        if kind in _MULTI_INSTANCE_KINDS:
+            # Copy every per-instance file <stem>_<j>.png, preserving the suffix.
+            # Require the suffix to be exactly _<digits> so a stem can't
+            # over-match another sample whose stem shares this prefix.
+            for src_f in sorted((src_dir / kind).glob(f"{stem}_*.png")):
+                if not src_f.name[len(stem) + 1:-4].isdigit():
+                    continue
+                (dst_dir / kind).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_f, dst_dir / kind / f"idx{idx:06d}_{src_f.name}")
+        else:
+            src_f = src_dir / kind / basename
+            if src_f.exists():
+                (dst_dir / kind).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_f, dst_dir / kind / dst_name)
     return dst_name
 
 

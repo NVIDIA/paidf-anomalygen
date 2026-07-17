@@ -50,8 +50,14 @@ def main() -> int:
         return 1
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
-    supported = {f"{t[0]}+{t[1]}"
-                 for t in cfg["dataloader_train"]["dataset"]["anomaly_types"]}
+    try:
+        anomaly_types = cfg["dataloader_train"]["dataset"]["anomaly_types"]
+        supported = {f"{t[0]}+{t[1]}" for t in anomaly_types}
+    except (KeyError, TypeError, IndexError):
+        print(f"error: {cfg_path} has no valid "
+              f"dataloader_train.dataset.anomaly_types — not a trained "
+              f"AnomalyGen checkpoint config?", file=sys.stderr)
+        return 1
 
     jsonl_types: set = set()
     entry_count = 0
@@ -69,6 +75,17 @@ def main() -> int:
                       file=sys.stderr)
                 return 1
             entry_count += 1
+            if not isinstance(entry, dict):
+                print(f"error: line {line_i} is not a JSON object",
+                      file=sys.stderr)
+                return 1
+            missing_keys = [k for k in
+                            ("anomaly_type", "image_filename", "mask_filename")
+                            if k not in entry]
+            if missing_keys:
+                print(f"error: line {line_i} missing key(s): "
+                      f"{', '.join(missing_keys)}", file=sys.stderr)
+                return 1
             jsonl_types.add(entry["anomaly_type"])
             for key in ("image_filename", "mask_filename"):
                 path = entry[key]

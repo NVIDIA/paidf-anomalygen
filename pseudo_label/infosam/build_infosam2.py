@@ -170,17 +170,20 @@ def build_infosam2(
         compile_image_encoder=False,
     )
 
-    # Load the weights.
+    # Load the weights. Normalize the pretrained dict to its inner "model" (or
+    # top level) once, so merging a fine-tune checkpoint works even when the
+    # pretrained dict has no "model" key. Previously the merge indexed
+    # ["model"] unconditionally, raising KeyError for a raw pretrained dict.
     pretrained_state_dict = torch.load(pretrained_checkpoint, weights_only=True)
-    if checkpoint is not None:
-        state_dict = torch.load(checkpoint, weights_only=True)
-        if "model" in state_dict:
-            state_dict = state_dict["model"]
-        pretrained_state_dict["model"].update(state_dict)
     if "model" in pretrained_state_dict:
         model_state_dict = pretrained_state_dict["model"]
     else:
         model_state_dict = pretrained_state_dict
+    if checkpoint is not None:
+        state_dict = torch.load(checkpoint, weights_only=True)
+        if "model" in state_dict:
+            state_dict = state_dict["model"]
+        model_state_dict.update(state_dict)
     missing_keys, unexpected_keys = model.load_state_dict(
         model_state_dict, strict=False
     )

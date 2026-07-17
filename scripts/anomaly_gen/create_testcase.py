@@ -32,8 +32,32 @@ def get_args():
     parser.add_argument("--GUIDANCE", default="7.0")
     parser.add_argument("--CROP_RATIO", default="2.0")
     parser.add_argument("--POISSON_BLEND", default="False")
-    parser.add_argument("--OK_image_path", type=str)
-    parser.add_argument("--NG_mask_path", type=str)
+    parser.add_argument(
+        "--dataset_dir",
+        type=str,
+        required=True,
+        help=(
+            "Dataset root. Masks are read from "
+            "<dataset_dir>/<texture>/mask/<anomaly_type>/*, and the <texture> and "
+            "<anomaly_type> folder names form the 'texture+anomaly_type' label. "
+            "By default each mask is paired with a clean image of its OWN texture "
+            "from <dataset_dir>/<texture>/clean_image/ (multi-texture safe); a "
+            "texture with no clean_image/ is an error unless --clean_image_dir is "
+            "given."
+        ),
+    )
+    parser.add_argument(
+        "--clean_image_dir",
+        type=str,
+        default=None,
+        help=(
+            "Optional: a single flat folder of clean images shared across all "
+            "textures, overriding the per-texture <texture>/clean_image/ default. "
+            "Use for single-texture data, or datasets that keep masks and clean "
+            "images in separate roots. With multiple textures this pairs clean "
+            "images across textures (a warning is printed)."
+        ),
+    )
     parser.add_argument("--name", type=str)
     parser.add_argument("--tSNE_sample", action="store_true", default=False)
     parser.add_argument(
@@ -61,29 +85,78 @@ def validate_args(args):
 def main(args):
     # We are using `secrets` for random sampling, so no need to set random seed.
 
-    OK_IMAGE_PATH = args.OK_image_path
-    NG_MASK_PATH = args.NG_mask_path
-    OK_IMAGE_FILENAMES = [
-        os.path.join(OK_IMAGE_PATH, filename)
-        for filename in os.listdir(OK_IMAGE_PATH)
-        if filename != "Thumbs.db"
-    ]
+    DATASET_DIR = args.dataset_dir
+    CLEAN_IMAGE_DIR = args.clean_image_dir
+
+    def _list_images(directory):
+        return [
+            os.path.join(directory, filename)
+            for filename in sorted(os.listdir(directory))
+            if filename != "Thumbs.db"
+            and os.path.isfile(os.path.join(directory, filename))
+        ]
+
     MASK_AND_ANOMALY_TYPES = [
         dict(
             mask_filename=os.path.join(
-                NG_MASK_PATH, texture, "mask", anomaly_type, mask_filename
+                DATASET_DIR, texture, "mask", anomaly_type, mask_filename
             ),
             anomaly_type=f"{texture}+{anomaly_type}",
+            texture=texture,
         )
-        for texture in os.listdir(os.path.join(NG_MASK_PATH))
-        for anomaly_type in os.listdir(os.path.join(NG_MASK_PATH, texture, "mask"))
+        for texture in os.listdir(os.path.join(DATASET_DIR))
+        if os.path.isdir(os.path.join(DATASET_DIR, texture, "mask"))
+        for anomaly_type in os.listdir(os.path.join(DATASET_DIR, texture, "mask"))
+        if os.path.isdir(os.path.join(DATASET_DIR, texture, "mask", anomaly_type))
         for mask_filename in os.listdir(
-            os.path.join(NG_MASK_PATH, texture, "mask", anomaly_type)
+            os.path.join(DATASET_DIR, texture, "mask", anomaly_type)
         )
         if mask_filename != "Thumbs.db"
     ]
-    log.info(f"Found {len(OK_IMAGE_FILENAMES)} OK images in {OK_IMAGE_PATH}")
-    log.info(f"Found {len(MASK_AND_ANOMALY_TYPES)} anomaly masks in {NG_MASK_PATH}")
+    TEXTURES = sorted({m["texture"] for m in MASK_AND_ANOMALY_TYPES})
+
+    # Resolve clean/OK images. Two modes:
+    #   default (per-texture): each mask pairs with a clean image of its OWN
+    #     texture from <dataset_dir>/<texture>/clean_image/. A texture with no
+    #     clean_image/ is an error. Multi-texture datasets never cross-pair.
+    #   --clean_image_dir override: a single flat folder of clean images shared
+    #     across all textures (single-texture / split-layout data).
+    if CLEAN_IMAGE_DIR is not None:
+        SHARED_OK_IMAGES = _list_images(CLEAN_IMAGE_DIR)
+        if not SHARED_OK_IMAGES:
+            raise ValueError(
+                f"No clean images found in --clean_image_dir {CLEAN_IMAGE_DIR!r}."
+            )
+        OK_IMAGES_BY_TEXTURE = {texture: SHARED_OK_IMAGES for texture in TEXTURES}
+        if len(TEXTURES) > 1:
+            log.warning(
+                f"{len(TEXTURES)} textures found but --clean_image_dir is a single "
+                "flat pool; clean images will be paired ACROSS textures. Omit "
+                "--clean_image_dir to pair per-texture from "
+                "<dataset_dir>/<texture>/clean_image/."
+            )
+        log.info(
+            f"OK images (shared flat pool of {len(SHARED_OK_IMAGES)}): {CLEAN_IMAGE_DIR}"
+        )
+    else:
+        SHARED_OK_IMAGES = None
+        OK_IMAGES_BY_TEXTURE = {}
+        for texture in TEXTURES:
+            clean_dir = os.path.join(DATASET_DIR, texture, "clean_image")
+            if not os.path.isdir(clean_dir):
+                raise ValueError(
+                    f"No clean_image/ for texture {texture!r} at {clean_dir!r}. "
+                    "Add <texture>/clean_image/ to the dataset, or pass "
+                    "--clean_image_dir to use a single shared folder."
+                )
+            OK_IMAGES_BY_TEXTURE[texture] = _list_images(clean_dir)
+            if not OK_IMAGES_BY_TEXTURE[texture]:
+                raise ValueError(f"No clean images found in {clean_dir!r}")
+        log.info(
+            "OK images (per-texture): "
+            + str({t: len(imgs) for t, imgs in OK_IMAGES_BY_TEXTURE.items()})
+        )
+    log.info(f"Found {len(MASK_AND_ANOMALY_TYPES)} anomaly masks in {DATASET_DIR}")
 
     # Parameters.
     # Parameters are fixed if there is only one value.
@@ -109,7 +182,12 @@ def main(args):
     ITERATION_GENERATION_MAX_INSTANCE = [5]
 
     if args.tSNE_sample:
-        train_full_OK_images_by_cluster_sampled = sample_by_tsne(OK_IMAGE_FILENAMES)
+        if SHARED_OK_IMAGES is None:
+            raise ValueError(
+                "--tSNE_sample requires --clean_image_dir (a single flat pool to "
+                "cluster over); it is not supported in per-texture mode."
+            )
+        train_full_OK_images_by_cluster_sampled = sample_by_tsne(SHARED_OK_IMAGES)
     else:
         train_full_OK_images_by_cluster_sampled = None
 
@@ -129,6 +207,7 @@ def main(args):
         for mask_and_anomaly_type in MASK_AND_ANOMALY_TYPES:
             mask_filename = mask_and_anomaly_type["mask_filename"]
             anomaly_type = mask_and_anomaly_type["anomaly_type"]
+            texture = mask_and_anomaly_type["texture"]
             if not os.path.exists(mask_filename):
                 raise ValueError(f"Mask file {mask_filename} does not exist")
             # Pair with OK image
@@ -144,7 +223,7 @@ def main(args):
                         train_full_OK_images_by_cluster_sampled[cluster_label]
                     )
                 else:
-                    OK_image = secrets.choice(OK_IMAGE_FILENAMES)
+                    OK_image = secrets.choice(OK_IMAGES_BY_TEXTURE[texture])
                 ok_image_filename = OK_image
                 if not os.path.exists(ok_image_filename):
                     raise ValueError(f"Image file {ok_image_filename} does not exist")

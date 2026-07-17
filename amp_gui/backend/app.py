@@ -35,10 +35,11 @@ from io import BytesIO
 import cv2
 import numpy as np
 import torch
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, g, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from omegaconf import OmegaConf
 from PIL import Image, ImageDraw, ImageOps
+from werkzeug.local import LocalProxy
 from werkzeug.utils import secure_filename
 
 # AMP Imports
@@ -54,17 +55,50 @@ app = Flask(__name__, static_folder="../frontend/public", static_url_path="")
 CORS(app)
 
 # Configuration
-UPLOAD_FOLDER = tempfile.mkdtemp(prefix="amp_gui_uploads_")
-OUTPUT_FOLDER = tempfile.mkdtemp(prefix="amp_gui_outputs_")
+# Per-session temp roots. Each session writes under its own <base>/<sid>/
+# subdirectory so concurrent browsers never collide on fixed filenames
+# (submask_resized.png, drawn_rois.json, seed_N/, ...).
+_UPLOAD_BASE = tempfile.mkdtemp(prefix="amp_gui_uploads_")
+_OUTPUT_BASE = tempfile.mkdtemp(prefix="amp_gui_outputs_")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "json", "bmp", "webp"}
 
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max file size
 
-# Global session storage
-session_data = {}
-is_using_temp_output = True
+# Per-session state, keyed by a stable id the frontend sends (X-AMP-Session
+# header, else the peer address as a last resort). `session_data` is a LocalProxy that
+# resolves to the current request's dict, so existing `session_data[...]` usage
+# is unchanged but isolated per browser instead of shared across all clients.
+_sessions = {}
+_sessions_lock = threading.Lock()
+
+
+def _current_session():
+    sess = getattr(g, "_amp_session", None)
+    if sess is None:
+        sid = request.headers.get("X-AMP-Session") or request.remote_addr or "default"
+        with _sessions_lock:
+            sess = _sessions.setdefault(sid, {})
+            sess.setdefault("_sid", sid)
+        g._amp_session = sess
+    return sess
+
+
+session_data = LocalProxy(_current_session)
+
+
+def upload_folder():
+    """Current session's upload directory (created on demand)."""
+    d = os.path.join(_UPLOAD_BASE, session_data["_sid"])
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def output_folder():
+    """Current session's output directory, or its custom override."""
+    override = session_data.get("_output_override")
+    d = override if override else os.path.join(_OUTPUT_BASE, session_data["_sid"])
+    os.makedirs(d, exist_ok=True)
+    return d
 
 # ROI Generation Globals
 cached_roi_models = None
@@ -281,8 +315,8 @@ def process_stage_result_of_template_box_to_masks(result_json_path, config, imag
                 if config.get("color_hist_enabled", True):
                     keep_color = (
                         keep_hog
-                        & (sim_lightness >= (1 - config.get("color_hist_lightness_tol", 0.8)))
-                        & (sim_color >= (1 - config.get("color_hist_color_tol", 0.2)))
+                        & (sim_lightness >= (1 - config.get("lightness_tol", 0.5)))
+                        & (sim_color >= (1 - config.get("color_tol", 0.5)))
                     )
                 else:
                     keep_color = keep_hog
@@ -587,7 +621,7 @@ def get_session_state():
 def get_output_directory():
     """Get current output directory path"""
     try:
-        return jsonify({"output_directory": app.config["OUTPUT_FOLDER"], "is_temp": is_using_temp_output})
+        return jsonify({"output_directory": output_folder(), "is_temp": session_data.get("_is_temp_output", True)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -595,7 +629,6 @@ def get_output_directory():
 @app.route("/api/output-directory/set", methods=["POST"])
 def set_output_directory():
     """Set custom output directory"""
-    global is_using_temp_output
     try:
         data = request.json
         custom_dir = data.get("directory", "").strip()
@@ -609,9 +642,9 @@ def set_output_directory():
         # Create directory if it doesn't exist
         os.makedirs(custom_dir, exist_ok=True)
 
-        # Update configuration
-        app.config["OUTPUT_FOLDER"] = custom_dir
-        is_using_temp_output = False
+        # Store the override on this session only
+        session_data["_output_override"] = custom_dir
+        session_data["_is_temp_output"] = False
 
         return jsonify(
             {
@@ -629,12 +662,11 @@ def set_output_directory():
 @app.route("/api/output-directory/reset", methods=["POST"])
 def reset_output_directory():
     """Reset to temporary output directory"""
-    global is_using_temp_output
     try:
-        # Create a new temp directory
-        new_temp_dir = tempfile.mkdtemp(prefix="amp_gui_outputs_")
-        app.config["OUTPUT_FOLDER"] = new_temp_dir
-        is_using_temp_output = True
+        # Drop any custom override; fall back to this session's temp dir
+        session_data.pop("_output_override", None)
+        session_data["_is_temp_output"] = True
+        new_temp_dir = output_folder()
 
         return jsonify(
             {
@@ -664,7 +696,7 @@ def upload_input_image():
 
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"input_{filename}")
+            filepath = os.path.join(upload_folder(), f"input_{filename}")
             file.save(filepath)
             session_data["ori_filename"] = filename
 
@@ -710,7 +742,7 @@ def upload_submask():
 
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"submask_{filename}")
+            filepath = os.path.join(upload_folder(), f"submask_{filename}")
             file.save(filepath)
 
             img = Image.open(filepath)
@@ -794,7 +826,7 @@ def select_submask():
         
         # Save the selected submask to a file
         img_data = base64.b64decode(selected["image"])
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"submask_selected_{selected['filename']}")
+        filepath = os.path.join(upload_folder(), f"submask_selected_{selected['filename']}")
         with open(filepath, "wb") as f:
             f.write(img_data)
         
@@ -868,7 +900,7 @@ def upload_roi_json():
         file = request.files["file"]
         if file and file.filename.endswith(".json"):
             filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"roi_{filename}")
+            filepath = os.path.join(upload_folder(), f"roi_{filename}")
             file.save(filepath)
 
             with open(filepath, "r") as f:
@@ -923,7 +955,7 @@ def convert_rois_to_images():
             roi_type = "legal" if is_legal else "illegal"
             timestamp = int(time.time())
             filename = f"roi_{roi_type}_draw_{timestamp}_{i}.png"
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+            filepath = os.path.join(upload_folder(), filename)
             cv2.imwrite(filepath, mask)
 
             # Add to session
@@ -971,7 +1003,7 @@ def save_rois():
             return jsonify({"error": "No ROIs provided"}), 400
 
         roi_data = {"rois": rois}
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], "drawn_rois.json")
+        filepath = os.path.join(upload_folder(), "drawn_rois.json")
 
         with open(filepath, "w") as f:
             json.dump(roi_data, f, indent=2)
@@ -1077,7 +1109,7 @@ def upload_roi_image():
             name, ext = os.path.splitext(filename)
             timestamp = int(time.time())
             filename = f"{name}_{timestamp}{ext}"
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"roi_{roi_type}_{filename}")
+            filepath = os.path.join(upload_folder(), f"roi_{roi_type}_{filename}")
 
             file.save(filepath)
 
@@ -1213,10 +1245,10 @@ def generate_masks():
             width, height = submask_img.size
 
         # Resize submask to match image dimensions if they differ
-        resized_submask_path = session_data["submask"]
+        resized_submask_path = submask_path
         if original_submask_size != (width, height):
             submask_img_resized = submask_img.resize((width, height), Image.Resampling.NEAREST)
-            resized_submask_path = os.path.join(app.config["UPLOAD_FOLDER"], "submask_resized.png")
+            resized_submask_path = os.path.join(upload_folder(), "submask_resized.png")
             submask_img_resized.save(resized_submask_path)
 
         # Parameters
@@ -1247,7 +1279,7 @@ def generate_masks():
         all_results = []
 
         for i, seed in enumerate(seeds):
-            output_dir = os.path.join(app.config["OUTPUT_FOLDER"], f"seed_{seed if seed is not None else 'None'}")
+            output_dir = os.path.join(output_folder(), f"seed_{seed if seed is not None else 'None'}")
             os.makedirs(output_dir, exist_ok=True)
 
             # Determine n_instances for this seed
@@ -1350,7 +1382,7 @@ def generate_masks():
             if all_results:
                 # Use default params for heatmap
                 hm_result, hm_error = overlay_heatmap_impl(
-                    app.config["OUTPUT_FOLDER"], overlay_on_input=True, opacity=0.5, apply_colormap=True
+                    output_folder(), overlay_on_input=True, opacity=0.5, apply_colormap=True
                 )
                 if not hm_error:
                     heatmap_data = hm_result
@@ -1384,7 +1416,7 @@ def render_mask():
         mask_path = None
         if data.get("seed") is not None:
             seed_str = str(data.get("seed")) if data.get("seed") != "None" else "None"
-            path = os.path.join(app.config["OUTPUT_FOLDER"], f"seed_{seed_str}")
+            path = os.path.join(output_folder(), f"seed_{seed_str}")
             if os.path.exists(path):
                 for f in os.listdir(path):
                     if f.startswith("auto_placed_mask") and f.endswith(".png"):
@@ -1480,7 +1512,7 @@ def overlay_heatmap_impl(directory, overlay_on_input=False, opacity=0.5, apply_c
 
         # Save the heatmap
         output_filename = f"heatmap_overlay_{len(mask_files)}_masks.png"
-        output_path = os.path.join(app.config["OUTPUT_FOLDER"], output_filename)
+        output_path = os.path.join(output_folder(), output_filename)
         Image.fromarray(result).save(output_path)
 
         log.info(f"Heatmap saved to: {output_path}")
@@ -1513,7 +1545,7 @@ def overlay_heatmap():
         directory = data.get("directory", None)
 
         if not directory:
-            directory = app.config["OUTPUT_FOLDER"]
+            directory = output_folder()
 
         if not os.path.exists(directory):
             return jsonify({"error": f"Directory not found: {directory}"}), 400
@@ -1541,7 +1573,7 @@ def download_results():
     """
 
     try:
-        output_dir = app.config["OUTPUT_FOLDER"]
+        output_dir = output_folder()
 
         if not os.path.exists(output_dir):
             return jsonify({"error": "Output directory not found"}), 400
@@ -1579,7 +1611,7 @@ def get_results_info():
     Get information about the current results folder.
     """
     try:
-        output_dir = app.config["OUTPUT_FOLDER"]
+        output_dir = output_folder()
 
         if not os.path.exists(output_dir):
             return jsonify({"exists": False, "file_count": 0, "folder_count": 0, "total_size": 0, "path": output_dir})
@@ -1622,7 +1654,7 @@ def clear_results():
     Clear all generated results (folders starting with seed_) from the output directory.
     """
     try:
-        output_dir = app.config["OUTPUT_FOLDER"]
+        output_dir = output_folder()
 
         if not os.path.exists(output_dir):
             return jsonify({"error": "Output directory not found"}), 400
@@ -1793,7 +1825,7 @@ def generate_roi():
             # Handle uploaded image
             f = request.files["image"]
             filename = secure_filename(f.filename)
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"roi_input_{filename}")
+            filepath = os.path.join(upload_folder(), f"roi_input_{filename}")
             f.save(filepath)
             session_data["ori_filename"] = filename
             session_data["input_image"] = filepath
@@ -1817,7 +1849,7 @@ def generate_roi():
                 boxes.append([float(v) for v in b])
 
         # Create output dir
-        output_dir = os.path.join(app.config["OUTPUT_FOLDER"], f"roi_gen_{session_data['ori_filename']}")
+        output_dir = os.path.join(output_folder(), f"roi_gen_{session_data['ori_filename']}")
         os.makedirs(output_dir, exist_ok=True)
 
         # Run generation
@@ -1926,12 +1958,12 @@ if __name__ == "__main__":
     log.info("=" * 60)
     log.info("🚀 Automatic Mask Placement + ROI Generation GUI")
     log.info("=" * 60)
-    log.info(f"📁 Upload: {UPLOAD_FOLDER}")
-    log.info(f"💾 Output: {OUTPUT_FOLDER}")
+    log.info(f"📁 Upload base: {_UPLOAD_BASE}")
+    log.info(f"💾 Output base: {_OUTPUT_BASE}")
 
     # Start ROI init thread
     threading.Thread(target=background_init, daemon=True).start()
 
     port = int(os.environ.get("AMP_PORT", 5000))
     log.info(f"🌐 Server starting on port {port}")
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(debug=False, host="127.0.0.1", port=port)

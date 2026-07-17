@@ -1,5 +1,5 @@
 ## Description: <br>
-Build and validate PAIDF AnomalyGen product and develop Docker containers from docker/Dockerfile.cuda128. <br>
+Build and validate PAIDF AnomalyGen product and develop Docker containers from docker/Dockerfile. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -7,36 +7,42 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache 2.0 <br>
+Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers building, validating, and shipping AnomalyGen CUDA 12.8 Docker containers for product and develop release workflows, including standard and air-gapped deployment variants. <br>
+Developers and engineers building and validating AnomalyGen CUDA 12.8 Docker containers for product and development deployments, including standard and air-gapped variants. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Yes] <br>
+**Credential Type(s):** [API key] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [SKILL.md](SKILL.md) <br>
-- [BENCHMARK.md](BENCHMARK.md) <br>
+- [SKILL.md](skills/anomalygen-release/SKILL.md) <br>
+- [BENCHMARK.md](skills/anomalygen-release/BENCHMARK.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Validation reports] <br>
+**Output Type(s):** [Shell commands, Configuration instructions, Files] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- claude-code <br>
-- codex <br>
+- `claude-code` <br>
+- `codex` <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (1 positive skill-activation case, 2 attempts per task, 50% pass threshold). <br>
+Evaluated against 1 task in the NVSkills-Eval external profile (astra-sandbox environment). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -60,11 +66,11 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 82% (+9%) | 71% (+12%) |
-| Discoverability | 2 | 85% (+15%) | 50% (-12%) |
-| Effectiveness | 2 | 79% (+33%) | 55% (+24%) |
-| Efficiency | 2 | 73% (+22%) | 36% (-15%) |
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+75%) | 88% (+62%) |
+| Discoverability | 1 | 83% (+33%) | 75% (+30%) |
+| Effectiveness | 1 | 80% (+76%) | 76% (+72%) |
+| Efficiency | 1 | 60% (+5%) | 69% (+20%) |
 
 ## Skill Version(s): <br>
 1.0.0 (source: pyproject.toml) <br>

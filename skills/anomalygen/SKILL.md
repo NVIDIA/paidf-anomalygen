@@ -379,7 +379,10 @@ Filter `searched/` by `nn_threshold`. Dropped samples are regenerated
 via re-AMP (fresh `(clean, submask)` pairing in the same defect type)
 for up to 5 attempts. If still short, falls back to best-scoring
 non-passing regens, then to dropped originals. Final bucket always
-equals `num_SDG`.
+equals `num_SDG`. `--allocation` points at prep-testcase's
+`allocation.json` so regen targets the intended per-defect counts —
+without it, targets come from the source bucket and a bucket left short
+(e.g. by an interrupted SDG) cannot be topped up.
 
 `filter_with_regen.py` runs the final `run_eval.sh` internally — this
 is the only eval against `searched/`. Read `references/inference.md
@@ -392,6 +395,7 @@ python3 -m scripts.utilities.filter_with_regen \
     --per-sample-csv ${SEARCHED}/per_sample.csv \
     --threshold ${NN_THRESHOLD} \
     --num-sdg ${NUM_SDG} \
+    --allocation ag_inference/${NAME}/allocation.json \
     --rounds-dir ${ROUNDS} \
     --regens-dir ${REGENS} \
     --dataset-dir ${DATASET_DIR} \

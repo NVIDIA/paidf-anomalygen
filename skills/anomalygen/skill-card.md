@@ -1,5 +1,5 @@
 ## Description: <br>
-PAIDF AnomalyGen pipeline — fine-tune, generate synthetic anomaly images (SDG), evaluate quality (nn_score), and per-sample search. <br>
+PAIDF AnomalyGen pipeline — fine-tune, generate synthetic anomaly images (SDG), evaluate quality (nn_score), and per-sample search across full, finetune_only, and inference_only modes. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,40 +9,46 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 CC-BY-4.0 AND Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to fine-tune diffusion models and generate synthetic anomaly images for manufacturing defect detection in few-shot scenarios. <br>
+Developers and engineers generating synthetic anomaly images for training anomaly detection models using a few-shot diffusion-based pipeline. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Yes] <br>
+**Credential Type(s):** [API key] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Setup](references/setup.md) <br>
-- [Fine-tune](references/finetune.md) <br>
-- [Prep Testcase](references/prep-testcase.md) <br>
-- [SDG Inference](references/sdg-inference.md) <br>
-- [Inference](references/inference.md) <br>
-- [Eval](references/eval.md) <br>
-- [SDG Refine](references/sdg-refine.md) <br>
-- [Datasets](references/datasets.md) <br>
+- [Setup (checkpoint download, HF_TOKEN)](references/setup.md) <br>
+- [Fine-tune (Phase 0–1)](references/finetune.md) <br>
+- [Inference (Phases 2–7)](references/inference.md) <br>
+- [Prep-testcase (AMP routing)](references/prep-testcase.md) <br>
+- [SDG inference (multi-GPU, NCCL)](references/sdg-inference.md) <br>
+- [Eval (nn_score, FID)](references/eval.md) <br>
+- [SDG refine (search, re-AMP)](references/sdg-refine.md) <br>
+- [Datasets (UC1/UC2/UC3)](references/datasets.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Files, Configuration instructions] <br>
+**Output Type(s):** [Shell commands, Files, Analysis] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [None] <br>
+**Other Properties Related to Output:** [Generated images, per-sample CSV metrics, eval logs] <br>
 
 ## Evaluation Agents Used: <br>
-- `claude-code` <br>
-- `codex` <br>
+- claude-code <br>
+- codex <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 internal evaluation tasks with 2 attempts each; pass threshold 50%. All tasks were positive skill-activation cases. <br>
+Evaluated against 3 internal skill-activation tasks in the astra-sandbox environment (NVSkills-Eval external profile). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -66,11 +72,11 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 6 | 100% (+0%) | 100% (+0%) |
-| Correctness | 6 | 76% (+2%) | 60% (+0%) |
-| Discoverability | 6 | 86% (+2%) | 68% (+2%) |
-| Effectiveness | 6 | 46% (-7%) | 30% (-12%) |
-| Efficiency | 6 | 75% (+5%) | 59% (+3%) |
+| Security | 3 | 100% (+0%) | 100% (+0%) |
+| Correctness | 3 | 89% (+64%) | 66% (+31%) |
+| Discoverability | 3 | 90% (+55%) | 84% (+40%) |
+| Effectiveness | 3 | 64% (+60%) | 21% (+8%) |
+| Efficiency | 3 | 70% (+33%) | 78% (+32%) |
 
 ## Skill Version(s): <br>
 1.0.0 (source: pyproject.toml) <br>

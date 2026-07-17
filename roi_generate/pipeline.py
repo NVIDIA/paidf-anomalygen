@@ -236,12 +236,12 @@ def run_template(ctx, config, roi_generate_models):
     stages = build_template_box_to_masks_stages(config, roi_generate_models)
 
     start_idx = 0
+    prev_hash = None
     if config.template_box_to_masks.resume_cache:
         cache_dir = os.path.join(ctx_resized["input"]["output_dir"], "template_box_to_masks", "cache")
-        ctx_resized, start_idx = load_cached_context(stages, ctx_resized, cache_dir)
+        ctx_resized, start_idx, prev_hash = load_cached_context(stages, ctx_resized, cache_dir)
         log.info(f"    [resume] From stage: {start_idx}-{stages[start_idx].name}")
 
-    prev_hash = None
     for i, stage in enumerate(stages[start_idx:], start=start_idx):
         t_stage = time.perf_counter()
         is_last = i == len(stages) - 1

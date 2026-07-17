@@ -30,6 +30,12 @@ preserved: if Phase 5 left 3 dropped stains and 1 dropped scratch, regen
 will attempt to produce 3 fresh stains and 1 fresh scratch (and retry up
 to 5 attempts if any still fail threshold).
 
+Pass --allocation (the pipeline's ag_inference/<name>/allocation.json) to
+target the *intended* per-defect counts instead: regen then also tops up
+defects the source bucket left short (e.g. after an interrupted SDG).
+Without it, targets are derived from the source bucket, so totals are
+preserved but a shortfall cannot be recovered.
+
 Workflow per attempt:
   1. Compute needed_per_defect = target_alloc[d] - kept_per_defect[d].
      Skip if all zero.
@@ -48,7 +54,7 @@ Final assembly:
     defect, then from the dropped originals (last resort).
 
 Outputs under --searched-dir (same layout as a normal SDG bucket):
-    reconstructed_image/<defect>_<NNNNN>.png    (+ original_mask/, overlay_image/, original_image/)
+    reconstructed_image/<defect>_<NNNNN>.png    (+ original_mask/, annotated_image/, original_image/)
     SDG_result.csv                              (rows merged from source + regens, with `source` column)
 
 The `source` column tags each sample as:
@@ -72,8 +78,34 @@ import sys
 from collections import defaultdict
 
 MAX_REGEN_TRIES = 5
-KINDS = ("reconstructed_image", "original_mask", "overlay_image", "original_image")
+KINDS = ("reconstructed_image", "original_mask", "annotated_image", "original_image")
+# annotated_image is emitted once per anomaly instance as "<stem>_<j>.png"
+# (see scripts/anomaly_gen/synthetic_dataset_generation.py), so it is globbed
+# and copied per instance rather than matched 1:1 like the single-file kinds.
+MULTI_INSTANCE_KINDS = ("annotated_image",)
 HERE = pathlib.Path(__file__).resolve().parent
+
+
+def _copy_sample_kinds(src_dir, src_basename, staging, new_stem):
+    """Copy every KIND for one sample from src_dir into staging, renamed to
+    new_stem. Single-file kinds copy 1:1 (<new_stem>.png); multi-instance kinds
+    (annotated_image, saved as "<stem>_<j>.png") are globbed and copied per
+    instance, preserving the <j> suffix as <new_stem>_<j>.png."""
+    src_dir = pathlib.Path(src_dir)
+    src_stem = pathlib.Path(src_basename).stem
+    for k in KINDS:
+        if k in MULTI_INSTANCE_KINDS:
+            for src_f in sorted((src_dir / k).glob(f"{src_stem}_*.png")):
+                suffix = src_f.name[len(src_stem):]  # e.g. "_0.png"
+                # Require _<digits>.png so a stem can't over-match another
+                # sample whose stem shares this prefix.
+                if not suffix[1:-4].isdigit():
+                    continue
+                shutil.copy2(src_f, staging / k / f"{new_stem}{suffix}")
+        else:
+            src_f = src_dir / k / src_basename
+            if src_f.exists():
+                shutil.copy2(src_f, staging / k / f"{new_stem}.png")
 
 
 def load_per_sample_nn(csv_path):
@@ -88,6 +120,64 @@ def load_per_sample_nn(csv_path):
 def load_sdg_rows(sdg_csv):
     with open(sdg_csv) as f:
         return list(csv.DictReader(f))
+
+
+def compute_target_alloc(src_sdg, allocation, num_sdg):
+    """Per-defect target counts, plus a list of warning strings.
+
+    `allocation` is the parsed intended allocation ({defect: count}) or None
+    to fall back to the counts already present in the source bucket."""
+    target_alloc = defaultdict(int)
+    warnings = []
+    if allocation is not None:
+        for defect, count in allocation.items():
+            target_alloc[defect] = int(count)
+        extra = sorted({row["anomaly_type"] for row in src_sdg}
+                       - set(target_alloc))
+        if extra:
+            warnings.append(
+                "defect type(s) in the source bucket but absent from "
+                "--allocation will be dropped from the final bucket: "
+                + ", ".join(extra))
+    else:
+        for row in src_sdg:
+            target_alloc[row["anomaly_type"]] += 1
+    total = sum(target_alloc.values())
+    if total != num_sdg:
+        msg = f"target allocation sums to {total}, not --num-sdg {num_sdg}"
+        if allocation is None and total < num_sdg:
+            msg += (" — the source bucket is short and no --allocation "
+                    "was given, so regen cannot top it up to --num-sdg")
+        warnings.append(msg)
+    return target_alloc, warnings
+
+
+def partition_source(src_sdg, src_nn, threshold, searched_dir):
+    """Split source rows into passing/dropped per defect. Rows with no
+    nn_score are counted separately — they are excluded from both keep and
+    fallback, so only regen can replace them."""
+    passing_by_defect = defaultdict(list)
+    dropped_by_defect = defaultdict(list)
+    nan_rows = 0
+    for row in src_sdg:
+        defect = row["anomaly_type"]
+        nn = src_nn.get(row["output_filename"], float("nan"))
+        if math.isnan(nn):
+            nan_rows += 1
+            continue
+        entry = {
+            "row": row,
+            "nn": nn,
+            "src_dir": searched_dir,
+            "src_basename": pathlib.Path(row["output_filename"]).name,
+            "source_attempt": 0,
+            "prev_nn": nn,  # for source samples, prev_nn == final nn
+        }
+        if nn >= threshold:
+            passing_by_defect[defect].append(entry)
+        else:
+            dropped_by_defect[defect].append(entry)
+    return passing_by_defect, dropped_by_defect, nan_rows
 
 
 def run_subprocess(cmd, label):
@@ -110,6 +200,12 @@ def main():
                    help="Keep samples with nn_score >= threshold. Set 0 to keep everything (no regen).")
     p.add_argument("--num-sdg", required=True, type=int,
                    help="Target final sample count.")
+    p.add_argument("--allocation", default=None, type=pathlib.Path,
+                   help="Intended per-defect allocation.json "
+                        "(ag_inference/<name>/allocation.json). When set, regen "
+                        "tops each defect up to this target even if the source "
+                        "bucket is short. Default: preserve the source bucket's "
+                        "per-defect counts.")
     p.add_argument("--rounds-dir", required=True, type=pathlib.Path,
                    help="Phase 5 rounds dir (used to read search_summary.csv for `source` labels).")
     p.add_argument("--regens-dir", required=True, type=pathlib.Path,
@@ -167,32 +263,39 @@ def main():
         br = best_round_by_idx.get(base_idx, 0)
         return "original" if br == 0 else f"round_{br}"
 
-    # Target allocation per defect (from current source bucket).
-    target_alloc = defaultdict(int)
-    for row in src_sdg:
-        target_alloc[row["anomaly_type"]] += 1
+    allocation = None
+    if args.allocation is not None:
+        if not args.allocation.is_file():
+            reason = "is not a file" if args.allocation.exists() else "not found"
+            print(f"error: --allocation {args.allocation} {reason}",
+                  file=sys.stderr)
+            sys.exit(1)
+        try:
+            allocation = json.loads(args.allocation.read_text())
+            # bool is excluded explicitly: isinstance(True, int) is True.
+            if (not isinstance(allocation, dict)
+                    or not all(isinstance(v, int) and not isinstance(v, bool)
+                               and v >= 0
+                               for v in allocation.values())):
+                raise ValueError("expected {defect: non-negative count}")
+        except ValueError as e:
+            print(f"error: --allocation {args.allocation} is not a valid "
+                  f"allocation.json: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    target_alloc, alloc_warnings = compute_target_alloc(
+        src_sdg, allocation, args.num_sdg)
+    for w in alloc_warnings:
+        print(f"warning: {w}", file=sys.stderr)
 
     # Partition source samples into passing / dropped per defect.
     # Each entry: {row, nn, src_basename}
-    passing_by_defect = defaultdict(list)
-    dropped_by_defect = defaultdict(list)
-    for row in src_sdg:
-        defect = row["anomaly_type"]
-        nn = src_nn.get(row["output_filename"], float("nan"))
-        if math.isnan(nn):
-            continue
-        entry = {
-            "row": row,
-            "nn": nn,
-            "src_dir": args.searched_dir,
-            "src_basename": pathlib.Path(row["output_filename"]).name,
-            "source_attempt": 0,
-            "prev_nn": nn,  # for source samples, prev_nn == final nn
-        }
-        if nn >= args.threshold:
-            passing_by_defect[defect].append(entry)
-        else:
-            dropped_by_defect[defect].append(entry)
+    passing_by_defect, dropped_by_defect, nan_rows = partition_source(
+        src_sdg, src_nn, args.threshold, args.searched_dir)
+    if nan_rows:
+        print(f"warning: {nan_rows} source sample(s) have no nn_score in "
+              f"{args.per_sample_csv} — excluded from keep/fallback; regen "
+              f"will attempt replacements", file=sys.stderr)
 
     # Regen pool — admitted (passing) regens per defect type, plus a
     # parallel "all_regens" list per defect for fallback.
@@ -409,13 +512,11 @@ def main():
         defect = s["row"]["anomaly_type"]
         seq = seq_per_defect[defect]
         seq_per_defect[defect] += 1
-        new_basename = f"{defect}_{seq:05d}.png"
+        new_stem = f"{defect}_{seq:05d}"
+        new_basename = f"{new_stem}.png"
 
-        # Copy KINDS files from src_dir under src_basename to staging under new_basename.
-        for k in KINDS:
-            src_f = s["src_dir"] / k / s["src_basename"]
-            if src_f.exists():
-                shutil.copy2(src_f, staging / k / new_basename)
+        # Copy KINDS files from src_dir under src_basename to staging, renamed.
+        _copy_sample_kinds(s["src_dir"], s["src_basename"], staging, new_stem)
 
         # Compute source label: "original" | "round_<N>" | "regen_<k>".
         base_idx = int(s["row"].get("index", "-1"))
@@ -491,7 +592,10 @@ def main():
         by_source[r["source"]] += 1
     print()
     print("=== filter+regen done ===")
-    print(f"  total written: {len(summary_rows)} / target {args.num_sdg}")
+    effective_target = sum(target_alloc.values())
+    print(f"  total written: {len(summary_rows)} / target {effective_target}"
+          + (f" (--num-sdg {args.num_sdg})"
+             if effective_target != args.num_sdg else ""))
     print(f"  passed threshold {args.threshold}: {pass_n}")
     print(f"  fallback (below threshold): {fallback_n}")
     print(f"  regen attempts used: {attempt} / max {MAX_REGEN_TRIES}")

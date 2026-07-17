@@ -53,20 +53,38 @@ def build_template_box_to_masks_stages(config, roi_generate_models):
     ]
 
 
+def quantize_box_to_grid(box, img_w, img_h, grid_w, grid_h):
+    """Map an image-space box onto the feature grid, guaranteeing at least
+    one cell: a thin box can quantize to an empty slice whose mean() is NaN,
+    silently zeroing that template's proposals."""
+    x0, y0, x1, y1 = box
+    # Clamp the origin into the grid first, then the far edge relative to
+    # it — this order stays safe even for out-of-range inputs.
+    tx0 = min(max(int(x0 / img_w * grid_w), 0), grid_w - 1)
+    ty0 = min(max(int(y0 / img_h * grid_h), 0), grid_h - 1)
+    tx1 = min(max(int(x1 / img_w * grid_w), tx0 + 1), grid_w)
+    ty1 = min(max(int(y1 / img_h * grid_h), ty0 + 1), grid_h)
+    return tx0, ty0, tx1, ty1
+
+
 def load_cached_context(stages, ctx, cache_dir):
-    """Try to restore cached context. Returns (ctx, start_idx)."""
+    """Try to restore cached context. Returns (ctx, start_idx, prev_hash).
+
+    prev_hash is the last verified stage hash: the caller must continue the
+    hash chain from it — restarting the chain at None would mismatch every
+    stage past the resume point on all subsequent runs."""
 
     prev_hash = None
     for i in range(len(stages) - 1):
         stage = stages[i]
         cached_hash = stage.load_cache_hash(cache_dir)
         if cached_hash is None:
-            return ctx, i
+            return ctx, i, prev_hash
         if cached_hash != stage.compute_dependency_hash(ctx, prev_hash):
-            return ctx, i
+            return ctx, i, prev_hash
         ctx[stage.name] = stage.load_cache_result(cache_dir)
         prev_hash = cached_hash
-    return ctx, len(stages) - 1
+    return ctx, len(stages) - 1, prev_hash
 
 
 class PipelineStage(ABC):
@@ -299,11 +317,13 @@ class ProposalGenerationStage(PipelineStage):
         self.max_proposal = config.template_box_to_masks.max_proposal
         self.proposal_similarity_tol = config.template_box_to_masks.proposal_similarity_tol
         self.nms_iou_threshold = config.template_box_to_masks.nms_iou_threshold
+        self.proposal_seed = config.template_box_to_masks.proposal_seed
 
         self.deps = {
             "max_proposal": self.max_proposal,
             "proposal_similarity_tol": self.proposal_similarity_tol,
             "nms_iou_threshold": self.nms_iou_threshold,
+            "proposal_seed": self.proposal_seed,
         }
 
     def run(self, ctx):
@@ -320,6 +340,10 @@ class ProposalGenerationStage(PipelineStage):
 
         img_w, img_h = image.size
         proposal_boxes, proposal_scores = [], []
+        # Seeded generator: identical inputs must yield identical proposals,
+        # or the dependency-hash cache can match while the real output would
+        # differ. The seed participates in self.deps for the same reason.
+        rng = np.random.default_rng(self.proposal_seed)
 
         def proposal_with_segmentation(prompts):
             for p in prompts:
@@ -343,7 +367,7 @@ class ProposalGenerationStage(PipelineStage):
 
         # Process each template box
         for x0, y0, x1, y1 in template_boxes:
-            tx0, ty0, tx1, ty1 = map(int, [x0 / img_w * W, y0 / img_h * H, x1 / img_w * W, y1 / img_h * H])
+            tx0, ty0, tx1, ty1 = quantize_box_to_grid((x0, y0, x1, y1), img_w, img_h, W, H)
 
             # Extract template feature vector
             template_feat = feat[:, ty0:ty1, tx0:tx1].mean(dim=(1, 2))
@@ -363,7 +387,7 @@ class ProposalGenerationStage(PipelineStage):
             # Random subsample
             max_pts = self.max_proposal
             if len(xs) > max_pts:
-                selected_ids = np.random.choice(len(xs), max_pts, replace=False)
+                selected_ids = rng.choice(len(xs), max_pts, replace=False)
                 xs, ys = xs[selected_ids], ys[selected_ids]
 
             # Convert to original image coordinates
@@ -389,6 +413,12 @@ class ProposalGenerationStage(PipelineStage):
             proposal_with_segmentation(
                 [{"boxes": [b], "point_coords": None, "point_labels": None} for b in local_boxes]
             )
+
+        if not proposal_boxes:
+            # Raise here with the descriptive message: an empty (0,) tensor
+            # would make torchvision nms fail with a cryptic shape error
+            # before SAMInferenceStage's friendly guard is ever reached.
+            raise ValueError("No proposal boxes found, please check the proposal generation parameters.")
 
         proposal_boxes_np = np.array(proposal_boxes)
         proposal_scores_np = np.array(proposal_scores)
@@ -686,6 +716,14 @@ class HOGFilteringStage(PipelineStage):
 
         aug_template_crops = ctx["template_prepare"]["aug_template_crops"]
         aug_template_mask_crops = ctx["mask_filter"]["aug_template_mask_crops"]
+
+        if len(aug_template_crops) != len(aug_template_mask_crops):
+            raise ValueError(
+                f"Template image/mask augmentation lists desynchronized "
+                f"({len(aug_template_crops)} images vs "
+                f"{len(aug_template_mask_crops)} masks); both stages must "
+                f"generate variants with identical transform configs."
+            )
 
         aug_template_masked_crops = np.array(
             [
@@ -1056,8 +1094,15 @@ class PostProcessStage(PipelineStage):
         cv2.imwrite(output_path, binary_mask)
 
         image_path = ctx["input"]["image_path"]
+        proc_w, proc_h = ctx["input"]["image"].size
+        # All box/mask fields below are in the processed (resized) space of
+        # processed_image_size, except "boxes", which is derived from the
+        # mask after it is resized back to original_image_size. The two size
+        # fields let consumers convert between the spaces.
         item = {
             "image_path": image_path,
+            "original_image_size": [ori_w, ori_h],
+            "processed_image_size": [proc_w, proc_h],
             "template_boxes": ctx["input"]["boxes"],
             "refined_template_boxes": ctx["template_prepare"]["refined_template_boxes"],
             "template_masks": [mask_to_compressed_rle(m) for m in ctx["sam_inference"]["template_masks"]],

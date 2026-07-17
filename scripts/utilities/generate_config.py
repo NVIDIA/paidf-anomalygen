@@ -23,6 +23,7 @@ type with "defect_type" key).
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 import yaml
@@ -50,8 +51,7 @@ def _types_from_description(path):
     return types
 
 
-def _render(template_path, subs):
-    text = template_path.read_text()
+def _render(text, subs):
     for key, val in subs.items():
         text = text.replace(f"<{key}>", val)
     return text
@@ -116,7 +116,19 @@ def main():
         "EARLY_STOP_PATIENCE": str(args.es_patience),
     }
 
-    rendered = _render(TEMPLATE_PATH, subs)
+    # Diff the template's tokens against the substitution map (rather than
+    # scanning the rendered text, which would false-positive on user values
+    # that happen to contain <CAPS>).
+    template_text = TEMPLATE_PATH.read_text()
+    tokens = set(re.findall(r"<([A-Z][A-Z0-9_]*)>", template_text))
+    missing = sorted(tokens - subs.keys())
+    if missing:
+        print(f"error: template placeholder(s) missing from the substitution "
+              f"map: {', '.join(f'<{t}>' for t in missing)} — "
+              f"{TEMPLATE_PATH.name} and generate_config.py are out of sync",
+              file=sys.stderr)
+        sys.exit(1)
+    rendered = _render(template_text, subs)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(rendered)
     print(f"wrote {args.output} (types={len(anomaly_types)})")

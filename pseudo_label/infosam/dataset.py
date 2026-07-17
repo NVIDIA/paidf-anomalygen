@@ -42,9 +42,19 @@ class InfoSAM2Dataset(Dataset):
                 max_sprinkle_area=0,
             )
         self.image_transforms = image_transforms
-        # Sanity check: Ensure each image has a corresponding mask.
+        # Sanity check: images and masks are paired positionally, so the counts
+        # must match (zip would otherwise silently drop the trailing extras) and
+        # each pair's stems must correspond. Require an exact stem match or an
+        # "<image_stem>_<suffix>" mask (e.g. image_0 -> image_0 / image_0_mask);
+        # a plain substring test wrongly lets "1" match "10_mask".
+        if len(self.image_paths) != len(self.mask_paths):
+            raise ValueError(
+                f"Number of images ({len(self.image_paths)}) and masks "
+                f"({len(self.mask_paths)}) differ."
+            )
         for image_path, mask_path in zip(self.image_paths, self.mask_paths):
-            if image_path.stem not in mask_path.stem:
+            istem, mstem = image_path.stem, mask_path.stem
+            if not (mstem == istem or mstem.startswith(istem + "_")):
                 raise ValueError(
                     f"Image and mask names do not match: {image_path} vs {mask_path}"
                 )

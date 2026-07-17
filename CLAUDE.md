@@ -103,71 +103,74 @@ orchestration:
 - If you do dispatch subagents, keep their scope narrow (one phase at a
   time) and expect to chain them.
 
-## Docker base image strategy
+## Docker build strategy
 
-`docker/Dockerfile` is intentionally lightweight (~15 min): it only installs
-vllm and copies source.  The compile-heavy dependencies (flash-attn,
-transformer-engine, apex, plus all of `requirements-conda-cuda128.txt`) live
-in `docker/Dockerfile.base`, built once and stored in the registry as
-`$PERF_IMAGE:$BASE_IMAGE_TAG`.
+`docker/Dockerfile` is a **single-stage** build. One Dockerfile bundles the
+compile-heavy dependencies (flash-attn, transformer-engine, apex,
+opencv-python-headless, vllm), the full `requirements-conda-cuda128.txt`, and
+the application layer. The base image is `nvidia/cuda:12.8.2-devel-ubuntu24.04`
+(`ARG PYTORCH_BASE`). There is **no** `docker/Dockerfile.base`, no separate
+base-image job, and no content-hash base tag — if you see a reference to any of
+those, it is stale.
 
-**Tag strategy: content hash (no manual bump).**
+**Where the heavy wheels come from.**
 
-The full base tag is `base-<12-char sha256 of Dockerfile.base + requirements-conda-cuda128.txt>`.
-Both CI jobs compute the hash with the same shell command, so they always
-agree on which base tag corresponds to a given commit:
+The CUDA-extension wheels (flash-attn, transformer-engine, apex,
+opencv-python-headless) are pre-built and published to this project's **GitLab
+PyPI registry**. CI passes a token-bearing index URL into the build via
+`--build-arg GITLAB_PYPI_INDEX_URL=...` (see `.gitlab-ci.yml`). When that arg is
+unset (local builds without a token), each compile-heavy `RUN` **falls back to a
+source compile** — apex from `git+https://github.com/NVIDIA/apex.git`, opencv
+from source with `WITH_FFMPEG=OFF` (never the vulnerable PyPI wheel). A local
+`docker build` therefore still works without registry access; it is just slow.
 
-```
-INPUT_HASH=$(cat docker/Dockerfile.base requirements-conda-cuda128.txt | sha256sum | cut -c1-8)
-BASE_IMAGE_TAG="${BASE_IMAGE_TAG_PREFIX}-${INPUT_HASH}"
-```
+**CI job (single stage):**
 
-Any change to either input automatically produces a new tag → CI builds and
-pushes a new base image → `docker-build-push` pulls it.  No manual tag bump
-is ever needed.
-
-**Runner split (since this repo's A100 + horde topology is the constraint):**
-
-| Job | Stage | Runner | Why |
+| Job | Stage | Runner | What it does |
 |---|---|---|---|
-| `build-base-image` | `build-base` | `10.63.147.87-A100` | Compile-heavy: `MAX_JOBS=32 NVCC_THREADS=8` for flash-attn / TE / apex needs the dedicated A100 host's cores + RAM |
-| `docker-build-push` | `build` | `[horde, docker]` (DinD) | Lightweight: `FROM` pre-baked base + install vllm + COPY source.  Frees the A100 host for actual training/inference work |
+| `docker-build-push` | `build` | `[horde, docker]` (DinD, `docker:28.4.0-cli`, 4 h timeout) | `docker build -f docker/Dockerfile` with the GitLab PyPI index URL, then push to both `$PERF_IMAGE` and `$SDG_IMAGE` |
 
-**When a developer needs to (re)build the base image:**
+**Tag strategy: `VERSION-SHA.LABEL` (no manual bump, no content hash).**
+
+The image tag is computed in the job script:
+
+```
+IMAGE_TAG="$VERSION-$CI_COMMIT_SHORT_SHA.$LABEL"
+```
+
+- `VERSION` — parsed from `pyproject.toml` (`version = ...`).
+- `CI_COMMIT_SHORT_SHA` — the commit.
+- `LABEL` — `mr<IID>` on merge-request pipelines, else `main`.
+
+Layer caching uses a floating `:cache` tag: the job pulls `$PERF_IMAGE:cache`,
+builds with `--cache-from $PERF_IMAGE:cache --build-arg BUILDKIT_INLINE_CACHE=1`,
+and re-pushes `:cache`. Rebuilds are therefore incremental — only layers whose
+inputs changed recompile (the heavy compile layers stay cached unless their pins
+move).
+
+**When / how the image is (re)built:**
 
 | Trigger | When |
 |---|---|
-| First-time setup | The computed hash doesn't exist in the registry yet |
-| After editing `Dockerfile.base` or `requirements-conda-cuda128.txt` | Hash changes → auto-trigger on protected branches |
-| Weekly schedule | Automatic — picks up NGC base image security patches |
+| MR pipeline | `docker-build-push` is **manual** (`when: manual`, `allow_failure`) — click the play button in the `build` stage |
+| Protected branch | Runs automatically on `anomalyGen` and `main` |
 
-**How to trigger:**
+**Local build:** `docker build -f docker/Dockerfile -t paidf-anomalygen:cuda12.8 .`
+from the repo root — add `--build-arg GITLAB_PYPI_INDEX_URL=<token-url>` to pull
+the pre-built wheels, or omit it for the (slower) source-compile fallback. This
+is the same image CI builds.
 
-- **Manually (MRs):** In the CI pipeline, find the `build-base-image` job in
-  the `build-base` stage and click the play button.
-- **Automatically (protected branches):** Push a commit that modifies
-  `docker/Dockerfile.base` or `requirements-conda-cuda128.txt`.
+**When helping a user with Docker build issues:**
 
-**Guard rails already in place:**
-
-- `build-base-image` skips the build if `$PERF_IMAGE:$BASE_IMAGE_TAG` already
-  exists in the registry (`docker manifest inspect` guard — no duplicate work).
-- `docker-build-push` does the same `docker manifest inspect` check up front
-  and exits with a clear, actionable error message (not a cryptic Docker
-  "FROM image not found") if the base tag is missing.
-- `tests/test_docker_base_image_strategy.py` enforces all of the above
-  invariants statically — no Docker daemon needed to run.
-
-**When helping a user with Docker build issues, check this first:**
-
-```bash
-INPUT_HASH=$(cat docker/Dockerfile.base requirements-conda-cuda128.txt | sha256sum | cut -c1-8)
-docker manifest inspect $PERF_IMAGE:base-$INPUT_HASH
-```
-
-If the tag is absent, direct them to one of the two trigger options above.
-Don't suggest rebuilding `docker/Dockerfile.base` locally — that takes hours
-on a CPU-only machine.  Use CI.
+- A failing heavy-dep install (flash-attn / TE / apex / opencv) almost always
+  means `GITLAB_PYPI_INDEX_URL` is unset or its token expired, so the build fell
+  through to a source compile. That is expected for local builds (slow but
+  correct); in CI it points at a bad/expired `CI_JOB_TOKEN` or a registry outage.
+- `FROM` / "image not found" → the NGC base `nvidia/cuda:12.8.2-devel-ubuntu24.04`
+  could not be pulled (login / network), not a missing project base image.
+- Don't look for `docker/Dockerfile.base`, a `build-base` stage, or an A100
+  base-image job — none exist. The single `docker-build-push` job is the whole
+  build.
 
 ## Engineering docs
 

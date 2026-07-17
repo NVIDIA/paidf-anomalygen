@@ -71,6 +71,7 @@ CSV_HEADER = [
     "morph_operation",
     "PSNR",
     "index",
+    "guardrail_pass",
 ]
 def extract_class_names(nested_dict):
     """
@@ -389,6 +390,9 @@ def demo(args):
                                         _to_csv_scalar(inpaint_condition.morph_operation[0]),
                                         _to_csv_scalar(inpaint_condition.PSNR[idx]),
                                         _to_csv_scalar(inpaint_condition.index[0]),
+                                        _to_csv_scalar(
+                                            1 if getattr(inpaint_condition, "guardrail_safe", [True] * (idx + 1))[idx] else 0
+                                        ),
                                     ],
                                 }
                             )

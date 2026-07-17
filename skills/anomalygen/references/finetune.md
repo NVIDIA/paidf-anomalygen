@@ -48,7 +48,8 @@ python -c "import torch; print(f'torch={torch.__version__}, CUDA={torch.cuda.is_
 ```
 
 Each anomaly image must have a corresponding mask with the `_mask` suffix in
-the filename stem. `validate_dataset.py` checks this and reports mismatches.
+the filename stem. `validate_dataset.py` checks this and exits non-zero on
+any mismatch (training would crash mid-iteration on it).
 
 ### Step 1: Dataset validation output
 
@@ -60,8 +61,10 @@ the filename stem. `validate_dataset.py` checks this and reports mismatches.
 Issues: 0
 ```
 
-- If no anomaly types detected → stop; the dataset structure is wrong.
-- Image/mask mismatch warnings → warn but continue if sufficient pairs exist.
+- If no anomaly types detected → exit 1; the dataset structure is wrong.
+- Image/mask mismatch or missing-directory issues → listed as WARNINGs, then
+  exit 1. Fix the pairs (or remove the offending files) and re-run — the
+  training dataloader asserts on exactly these and would crash mid-iteration.
 - The anomaly types list from this output is used in `generate_config.py`
   (`--defect-spec` drives it, but validate first to catch structural issues).
 

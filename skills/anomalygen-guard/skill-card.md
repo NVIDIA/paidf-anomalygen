@@ -9,35 +9,38 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers operating the PAIDF AnomalyGen product container use this skill to enforce runtime guardrails and validate preflight checks before training, inference, evaluation, or refinement workflows. <br>
+Developers and engineers operating AnomalyGen in product mode use this skill to enforce runtime guardrails and validate preflight checks before GPU-intensive training, inference, evaluation, or refinement workflows. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [SKILL.md](SKILL.md) <br>
-- [BENCHMARK.md](BENCHMARK.md) <br>
-- [scripts/preflight.py](scripts/preflight.py) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Validation reports] <br>
+**Output Type(s):** [Analysis, Shell commands] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- Claude Code (`claude-code`) <br>
-- Codex (`codex`) <br>
+- claude-code <br>
+- codex <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 internal evaluation tasks with 2 attempts per task; pass threshold 50%. <br>
+Evaluated against 3 evaluation tasks in the external NVSkills-Eval profile (astra-sandbox environment). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -61,11 +64,11 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 6 | 100% (+0%) | 100% (+0%) |
-| Correctness | 6 | 58% (-11%) | 93% (+13%) |
-| Discoverability | 6 | 33% (-11%) | 81% (+19%) |
-| Effectiveness | 6 | 58% (-3%) | 86% (+14%) |
-| Efficiency | 6 | 45% (-0%) | 72% (+17%) |
+| Security | 3 | 100% (+0%) | 100% (+0%) |
+| Correctness | 3 | 77% (+43%) | 97% (+57%) |
+| Discoverability | 3 | 67% (+50%) | 97% (+54%) |
+| Effectiveness | 3 | 77% (+43%) | 85% (+56%) |
+| Efficiency | 3 | 70% (+45%) | 93% (+46%) |
 
 ## Skill Version(s): <br>
 1.0.0 (source: pyproject.toml) <br>

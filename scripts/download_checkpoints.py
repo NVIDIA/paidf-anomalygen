@@ -210,8 +210,14 @@ def main(args):
     download_model(args.checkpoint_dir, "google-t5/t5-11b", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"])
     download_model(args.checkpoint_dir, "google-t5/t5-large", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"])
 
-    # Download the guardrail models
-    # download_model(args.checkpoint_dir, "nvidia/Cosmos-Guardrail1", verify_md5=args.verify_md5)
+    # Download the guardrail models.
+    # Cosmos-Guardrail1 carries the SigLIP-based content-safety classifier
+    # (video_content_safety_filter/) used by the post-generation image guardrail
+    # (and the face-blur filter). The SigLIP encoder weights are bundled inside
+    # this repo, so no separate google/siglip download is needed.
+    download_model(args.checkpoint_dir, "nvidia/Cosmos-Guardrail1", verify_md5=args.verify_md5)
+    # Llama-Guard-3-8B powers the *text* (prompt) guardrail only; uncomment if
+    # you also enable the text guardrail (guardrail_config.enabled=True).
     # download_model(
     #     args.checkpoint_dir, "meta-llama/Llama-Guard-3-8B", verify_md5=args.verify_md5, ignore_patterns=["original/*"]
     # )

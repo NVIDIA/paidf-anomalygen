@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Any, List, Tuple, Union
 
 import torch
@@ -165,6 +166,51 @@ class AnomalyGenPipeline(Text2ImagePipeline):
             )
         else:
             pipe.text_guardrail_runner = None
+
+        # Post-generation image content-safety guardrail (SigLIP). Runs on every
+        # generated image in inpaint_image(), covering both training validation
+        # and inference. Independent of the text guardrail above; a failure to
+        # initialize disables it rather than aborting generation.
+        #
+        # On by default via config (image_enabled). The env var ANOMALYGEN_IMAGE_GUARDRAIL
+        # is an explicit override that wins over the config when set: "1"/"true"/"on"
+        # forces it on, "0"/"false"/"off" forces it off; unset falls back to the config.
+        # This lets a single workflow toggle the guardrail without editing configs.
+        _env = os.environ.get("ANOMALYGEN_IMAGE_GUARDRAIL", "").strip().lower()
+        if _env in ("1", "true", "yes", "on"):
+            image_guardrail_enabled = True
+        elif _env in ("0", "false", "no", "off"):
+            image_guardrail_enabled = False
+        else:
+            # Default to True to match CosmosGuardrailConfig.image_enabled (ON by
+            # default): if a config ever lacks the field, keep the safety gate on
+            # rather than silently disabling it.
+            image_guardrail_enabled = getattr(config.guardrail_config, "image_enabled", True)
+        pipe.image_guardrail_runner = None
+        if image_guardrail_enabled:
+            from cosmos_predict2.auxiliary.guardrail.common import presets as guardrail_presets
+
+            try:
+                # Image guard keeps SigLIP resident on GPU by default
+                # (image_offload_model_to_cpu=False) — offloading it per image is the
+                # dominant guardrail latency cost. Separate from the text/Llama-Guard
+                # offload knob (offload_model_to_cpu).
+                image_offload = getattr(config.guardrail_config, "image_offload_model_to_cpu", False)
+                pipe.image_guardrail_runner = guardrail_presets.create_image_guardrail_runner(
+                    config.guardrail_config.checkpoint_dir, image_offload
+                )
+                log.info(
+                    f"Image guardrail enabled (SigLIP content-safety filter, offload_to_cpu={image_offload})."
+                )
+            except Exception as exc:
+                # On-by-default safety feature: a failure to initialize means images
+                # run *unprotected*, so surface it loudly (error, not warning) rather
+                # than letting a user believe they're protected when they aren't.
+                log.error(
+                    f"Failed to initialize image guardrail; post-generation image checks are DISABLED "
+                    f"and generated images will NOT be safety-screened. Reason: {exc}"
+                )
+                pipe.image_guardrail_runner = None
 
         # 6. Load DiT
         assert dit_path is not None, "dit_path must be provided to load the model"

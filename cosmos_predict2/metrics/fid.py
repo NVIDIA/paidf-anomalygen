@@ -16,6 +16,14 @@
 import torch
 
 
+def _sqrtm_psd(mat):
+    """Matrix square root of a symmetric PSD matrix via eigendecomposition."""
+    mat = (mat + mat.T) / 2
+    eigvals, eigvecs = torch.linalg.eigh(mat)
+    sqrt_eigvals = torch.sqrt(torch.clamp(eigvals, min=0))
+    return (eigvecs * sqrt_eigvals) @ eigvecs.T
+
+
 def compute_fid_on_feats(feats_1, feats_2):
     if feats_1 is None or feats_2 is None:
         raise ValueError("One of the feature sets is None for FID computation.")
@@ -26,13 +34,8 @@ def compute_fid_on_feats(feats_1, feats_2):
         mu2 = feats_2.mean(dim=0)
         sigma1 = torch.cov(feats_1.T)
         sigma2 = torch.cov(feats_2.T)
-        cov_prod = (sigma1 @ sigma2)
-        cov_prod = (cov_prod + cov_prod.T) / 2  # Make it symmetric
-        # Eigen-decomposition based sqrtm
-        eigvals, eigvecs = torch.linalg.eigh(cov_prod)
-        eigvals_clamped = torch.clamp(eigvals, min=0)
-        sqrt_eigvals = torch.sqrt(eigvals_clamped)
-        covmean = eigvecs @ torch.diag(sqrt_eigvals) @ eigvecs.T
+        sigma1_sqrt = _sqrtm_psd(sigma1)
+        covmean = _sqrtm_psd(sigma1_sqrt @ sigma2 @ sigma1_sqrt)  # only Tr(covmean) is used
         fid = torch.sum((mu1 - mu2) ** 2) + torch.trace(sigma1 + sigma2 - 2 * covmean)
         return fid.item()
     except Exception as e:

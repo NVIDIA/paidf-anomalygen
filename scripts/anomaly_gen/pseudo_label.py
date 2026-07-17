@@ -137,7 +137,7 @@ def get_args():
             "The threshold ratio of the area for the refined mask that needs "
             "to be filtered. 0.5 means that if the area of "
             "the refined mask is smaller than the area of the input mask by "
-            "50%, the refined mask will be filtered. Set to 0.0 to disable "
+            "50%%, the refined mask will be filtered. Set to 0.0 to disable "
             "this feature. Default is 0.5."
         ),
     )

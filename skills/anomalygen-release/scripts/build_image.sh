@@ -14,19 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Build an AnomalyGen product or develop Docker image from docker/Dockerfile.cuda128.
+# Build an AnomalyGen product or develop Docker image from docker/Dockerfile.
 set -euo pipefail
 
 mode="product"
 image_name=""
 tag="$(date -u +%Y%m%d)"
-dockerfile="docker/Dockerfile.cuda128"
+dockerfile="docker/Dockerfile"
 
 usage() {
     cat <<'EOF'
 Usage:
   build_image.sh [--mode product|develop] [--tag TAG] [--image-name NAME]
-                 [--dockerfile docker/Dockerfile.cuda128]
+                 [--dockerfile docker/Dockerfile]
 
 Defaults:
   --mode product
@@ -97,14 +97,16 @@ if [[ -z "${image_name}" ]]; then
 fi
 
 [[ -f "${dockerfile}" ]] || { echo "error: ${dockerfile} not found" >&2; exit 1; }
-[[ -f "cosmos-predict2-cuda128.yaml" ]] || {
-    echo "error: cosmos-predict2-cuda128.yaml not found" >&2
-    exit 1
-}
-[[ -f "requirements-conda-cuda128.txt" ]] || {
-    echo "error: requirements-conda-cuda128.txt not found" >&2
-    exit 1
-}
+
+# Preflight the conda spec + requirements file the chosen Dockerfile needs.
+# The arm64 / CUDA-13 Dockerfile pins the cuda130 inputs; everything else the
+# cuda128 inputs.
+case "${dockerfile}" in
+    *arm.cuda130*) conda_yaml="cosmos-predict2-cuda130.yaml"; req_txt="requirements-conda-cuda130.txt";;
+    *)             conda_yaml="cosmos-predict2-cuda128.yaml"; req_txt="requirements-conda-cuda128.txt";;
+esac
+[[ -f "${conda_yaml}" ]] || { echo "error: ${conda_yaml} not found" >&2; exit 1; }
+[[ -f "${req_txt}" ]]    || { echo "error: ${req_txt} not found" >&2; exit 1; }
 
 image="${image_name}:${tag}"
 echo "=== building ${mode} image ${image} with ${dockerfile} ==="

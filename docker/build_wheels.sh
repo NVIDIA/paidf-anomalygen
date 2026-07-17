@@ -19,7 +19,7 @@
 # GitLab PyPI registry so subsequent Docker / CI builds can `pip install`
 # instead of recompiling from source.
 #
-# Wheels produced (from docker/Dockerfile.cuda128):
+# Wheels produced (from docker/Dockerfile):
 #   flash-attn                  2.8.3
 #   transformer-engine          2.13.0   (wrapper)
 #   transformer-engine-torch    2.13.0   (PyTorch backend, source-compiled)
@@ -37,7 +37,7 @@
 #                    default: metropolis-perf/sdg/cosmos-anomalygen
 #   MAX_JOBS         parallel jobs for native compiles
 #                    (also used as MAKEFLAGS=-j$MAX_JOBS).
-#                    default: 4 (matches docker/Dockerfile.cuda128).
+#                    default: 4 (matches docker/Dockerfile).
 
 set -euo pipefail
 
@@ -58,7 +58,7 @@ BUILD_IMAGE="nvidia/cuda:12.8.2-devel-ubuntu24.04"
 WHEELS_DIR="$(cd "$(dirname "$0")/.." && pwd)/wheels"
 mkdir -p "$WHEELS_DIR"
 
-# Pins (keep in sync with docker/Dockerfile.cuda128)
+# Pins (keep in sync with docker/Dockerfile)
 export TORCH_VERSION="2.10.0"
 export TORCHVISION_VERSION="0.25.0"
 export EINOPS_VERSION="0.8.2"
@@ -151,7 +151,7 @@ docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e USER="$(id -un)" -e HOME=/tmp \
     -v "$WHEELS_DIR:/wheels:ro" \
-    -e REPO_URL -e GITLAB_TOKEN \
+    -e REPO_URL="$REPO_URL" -e GITLAB_TOKEN="$GITLAB_TOKEN" \
     python:3.12-slim bash -euxc '
         pip install --no-cache-dir twine
         python -m twine upload \

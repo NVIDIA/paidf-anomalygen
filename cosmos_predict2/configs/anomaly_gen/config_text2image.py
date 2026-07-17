@@ -40,6 +40,22 @@ class CosmosGuardrailConfig:
     checkpoint_dir: str
     offload_model_to_cpu: bool = True
     enabled: bool = True
+    # `enabled` gates the text (prompt) guardrail. `image_enabled` independently
+    # gates the post-generation image content-safety guardrail (SigLIP), which
+    # runs on every generated image during both training validation and inference.
+    # Default ON: the per-image cost is ~2% with SigLIP resident on GPU (see
+    # image_offload_model_to_cpu). Turn off via this flag or env ANOMALYGEN_IMAGE_GUARDRAIL=0.
+    image_enabled: bool = True
+    # Offload control for the image guardrail, kept separate from `offload_model_to_cpu`
+    # (which governs the text/Llama-Guard path). The SigLIP classifier is small
+    # (~3.3GB), and offloading it CPU<->GPU on every generated image dominates the
+    # guardrail's latency (~451ms/img vs ~30ms/img resident). Default to keeping it
+    # resident on GPU so the per-image guardrail cost is ~2% instead of ~34%.
+    # NOTE: because the guardrail is built in the model __init__, resident=default
+    # keeps ~3.3GB on the GPU for the whole *training* run too (not just inference).
+    # On configs near the memory ceiling (e.g. 14B / large batch) set this True to
+    # offload, or disable via image_enabled / ANOMALYGEN_IMAGE_GUARDRAIL=0.
+    image_offload_model_to_cpu: bool = False
 
 
 @make_freezable
