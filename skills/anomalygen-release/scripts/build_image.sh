@@ -45,31 +45,16 @@ if [[ "${ANOMALYGEN_PRODUCT_MODE:-}" == "1" ]]; then
     exit 1
 fi
 
-# Ensure Docker is available; install if missing (Ubuntu/Debian only).
+# Docker is required. We deliberately do NOT auto-install it: a build script
+# silently running sudo to modify apt sources, add GPG keyrings, install system
+# packages, and enable a system service is a significant, hard-to-reverse host
+# change that a user running a "build image" command would not expect. If Docker
+# is missing, install it yourself and re-run.
 if ! command -v docker &>/dev/null; then
-    echo "=== docker not found — installing Docker Engine (Ubuntu/Debian) ==="
-    if ! command -v apt-get &>/dev/null; then
-        echo "error: automatic Docker install only supports Ubuntu/Debian (apt-get not found)" >&2
-        exit 1
-    fi
-    sudo apt-get update -qq
-    sudo apt-get install -y ca-certificates curl
-    sudo install -m 0755 -d /etc/apt/keyrings
-    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-        -o /etc/apt/keyrings/docker.asc
-    sudo chmod a+r /etc/apt/keyrings/docker.asc
-    # shellcheck disable=SC1091
-    echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-https://download.docker.com/linux/ubuntu \
-$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
-        sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update -qq
-    sudo apt-get install -y \
-        docker-ce docker-ce-cli containerd.io \
-        docker-buildx-plugin docker-compose-plugin
-    sudo systemctl enable --now docker
-    echo "=== Docker $(docker --version) installed ==="
+    echo "error: docker not found in PATH." >&2
+    echo "       Install Docker Engine, then re-run this script:" >&2
+    echo "         https://docs.docker.com/engine/install/" >&2
+    exit 1
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -109,10 +94,21 @@ esac
 [[ -f "${req_txt}" ]]    || { echo "error: ${req_txt} not found" >&2; exit 1; }
 
 image="${image_name}:${tag}"
-echo "=== building ${mode} image ${image} with ${dockerfile} ==="
-echo "sudo DOCKER_BUILDKIT=1 docker build --target ${mode} -f ${dockerfile} -t ${image} ."
 
-sudo DOCKER_BUILDKIT=1 docker build \
+# Use sudo for docker only when the daemon isn't reachable as the current user
+# (override with DOCKER_SUDO). Avoids running the build as root unnecessarily.
+if [[ -n "${DOCKER_SUDO+x}" ]]; then
+    SUDO="${DOCKER_SUDO}"
+elif docker info >/dev/null 2>&1; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
+echo "=== building ${mode} image ${image} with ${dockerfile} ==="
+echo "${SUDO:+${SUDO} }DOCKER_BUILDKIT=1 docker build --target ${mode} -f ${dockerfile} -t ${image} ."
+
+${SUDO} DOCKER_BUILDKIT=1 docker build \
     --target "${mode}" \
     -f "${dockerfile}" \
     -t "${image}" \

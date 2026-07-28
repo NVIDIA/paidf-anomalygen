@@ -70,6 +70,13 @@ def parse_args():
     parser.add_argument(
         "--verify_md5", action="store_true", default=False, help="Verify MD5 checksums of existing files."
     )
+    parser.add_argument(
+        "--with_t5_11b",
+        action="store_true",
+        default=False,
+        help="Also download google-t5/t5-11b (T5-XXL, ~45GB). Off by default: AnomalyGen "
+        "uses t5-large; t5-11b is only needed when a config sets t5_model_name to it.",
+    )
     args = parser.parse_args()
     return args
 
@@ -207,7 +214,10 @@ def main(args):
         download_model(args.checkpoint_dir, repo_id, verify_md5=args.verify_md5)
 
     # Download T5 model
-    download_model(args.checkpoint_dir, "google-t5/t5-11b", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"])
+    if args.with_t5_11b:
+        download_model(
+            args.checkpoint_dir, "google-t5/t5-11b", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"]
+        )
     download_model(args.checkpoint_dir, "google-t5/t5-large", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"])
 
     # Download the guardrail models.

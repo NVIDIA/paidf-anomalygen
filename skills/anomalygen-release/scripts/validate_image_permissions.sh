@@ -176,10 +176,12 @@ nested_write_targets=(
     "${HOME}/.cache/huggingface"
 )
 
+# The write-test files below are intentionally not cleaned up: this whole
+# script runs inside a `docker run --rm` container, so anything written to its
+# ephemeral layer is discarded when it exits.
 for path in "${nested_write_targets[@]}"; do
     if mkdir -p "${path}" 2>/dev/null && touch "${path}/.write_test" 2>/dev/null; then
         ok "nested runtime path is writable: ${path}"
-        rm -f "${path}/.write_test" 2>/dev/null || true
     else
         fail "nested runtime path is not writable: ${path}"
     fi
@@ -194,7 +196,6 @@ sdg_csv_targets=(
 for file in "${sdg_csv_targets[@]}"; do
     if mkdir -p "$(dirname "${file}")" 2>/dev/null && printf "index,output_filename\n" > "${file}" 2>/dev/null; then
         ok "SDG_result.csv target is writable: ${file}"
-        rm -f "${file}" 2>/dev/null || true
     else
         fail "SDG_result.csv target is not writable: ${file}"
     fi

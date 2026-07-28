@@ -149,6 +149,7 @@ class AnomalyGenPipeline(Text2ImagePipeline):
         pipe.text_encoder = CosmosT5TextEncoder(device=device, cache_dir=text_encoder_path)
         pipe.text_encoder.to(device)
         pipe.text_tokenizer = pipe.text_encoder.tokenizer # To avoid naming conflict w/ cosmos tokenizer
+        pipe.text_encoder_path = text_encoder_path  # recorded so from_anomaly_gen_config can skip a redundant reload
 
         # 5. Initialize conditioner
         pipe.conditioner = instantiate(config.conditioner)
@@ -284,14 +285,19 @@ class AnomalyGenPipeline(Text2ImagePipeline):
         # Text tokenizer max length
         self.text_tokenizer_max_length = ag_config.text_tokenizer.max_length
 
-        # 5. Optionally swap to a lighter T5 encoder variant
+        # 5. Optionally swap to a lighter T5 encoder variant.
+        # The model init now passes t5_model_name to from_config as text_encoder_path,
+        # so the encoder is usually already the right one — only reload when it isn't,
+        # which avoids eagerly loading the heavy t5-11b default just to discard it
+        # (and keeps t5-11b off the required-checkpoint set for t5-large runs).
         t5_model_name = getattr(ag_config, 't5_model_name', None)
-        if t5_model_name is not None:
+        if t5_model_name is not None and t5_model_name != getattr(self, "text_encoder_path", None):
             log.info(f"Replacing T5 encoder with lighter variant: {t5_model_name}")
             self.text_encoder = CosmosT5TextEncoder(
                 model_name=t5_model_name, device="cuda", cache_dir=t5_model_name
             )
             self.text_tokenizer = self.text_encoder.tokenizer
+            self.text_encoder_path = t5_model_name
 
         # 6. Move text encoder to the same precision as anomaly gen components
         self.text_encoder.text_encoder.to(**self.ad_tensor_kwargs)

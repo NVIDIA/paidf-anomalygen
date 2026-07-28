@@ -130,10 +130,20 @@ class Predict2AnomalyGenModel(Predict2Video2WorldModel):
         else:
             self.data_parallel_size = 1
 
-        # New way to init pipe
+        # New way to init pipe.
+        # Pass the ag_config's text encoder (t5_model_name, e.g. t5-large) so the
+        # pipeline loads it directly instead of eagerly loading the ~45 GB t5-11b
+        # default at from_config and discarding it in from_anomaly_gen_config. This
+        # keeps t5-11b off the required-checkpoint set for t5-large runs (matters on
+        # fresh / air-gapped installs where t5-11b isn't downloaded).
+        t5_model_name = getattr(config.ag_config, "t5_model_name", None)
+        from_config_kwargs = (
+            {"text_encoder_path": t5_model_name} if t5_model_name is not None else {}
+        )
         self.pipe = AnomalyGenPipeline.from_config(
             config.pipe_config,
             dit_path=config.model_manager_config.dit_path,
+            **from_config_kwargs,
         )
         # Load anomaly gen components from config
         self.pipe.from_anomaly_gen_config(config.ag_config)

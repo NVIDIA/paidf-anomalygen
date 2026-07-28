@@ -45,3 +45,37 @@ def make_png(path, size=(4, 4), mode="RGB"):
 
 def write_jsonl(path, rows):
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def make_checkpoints(root, sizes=("2B",), with_t5_large=True, with_t5_11b=False,
+                     with_guardrail=True):
+    """Populate a fake ``checkpoints/`` tree with the artifacts ``check.sh`` and
+    ``download_checkpoints.sh`` look for (superset of both). Files carry dummy
+    content — the scripts only test for presence / non-empty dirs. Returns the
+    root as a ``pathlib.Path``.
+    """
+    root = pathlib.Path(root)
+
+    def touch(rel):
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+
+    for s in sizes:
+        touch(f"nvidia/Cosmos-Predict2-{s}-Text2Image/model.pt")
+    if with_t5_large:
+        touch("google-t5/t5-large/config.json")
+    if with_t5_11b:
+        touch("google-t5/t5-11b/config.json")
+    if with_guardrail:
+        touch("nvidia/Cosmos-Guardrail1/video_content_safety_filter/safety_filter.pt")
+        touch("nvidia/Cosmos-Guardrail1/face_blur_filter/Resnet50_Final.pth")
+        touch("nvidia/Cosmos-Guardrail1/video_content_safety_filter/"
+              "models--google--siglip-so400m-patch14-384/snapshots/abc/model.safetensors")
+    touch("NVDINOV2/nv_dinov2_classification_model.ckpt")
+    touch("nvidia/C-RADIO-V3/model.safetensors")
+    touch("facebook/dinov2-large/config.json")
+    touch("sam2/sam2.1_hiera_large.pt")
+    touch("Qwen/Qwen3-VL-4B-Instruct/model-00001-of-00002.safetensors")
+    touch("Qwen/Qwen3-VL-4B-Instruct/model-00002-of-00002.safetensors")
+    return root

@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers operating AnomalyGen in product mode use this skill to enforce runtime guardrails and validate preflight checks before GPU-intensive training, inference, evaluation, or refinement workflows. <br>
+Developers and engineers operating AnomalyGen in product mode use this skill to validate workflow inputs and enforce runtime guardrails before GPU-intensive training, inference, evaluation, and refinement operations. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,6 +25,7 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
+- [preflight.py](scripts/preflight.py) <br>
 
 
 ## Skill Output: <br>
@@ -34,13 +35,13 @@ Mitigation: Review and scan skill before deployment. <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- claude-code <br>
-- codex <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 evaluation tasks in the external NVSkills-Eval profile (astra-sandbox environment). <br>
+Evaluated against 3 internal evaluation tasks (positive skill-activation cases) in a k8s-sandbox environment. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -57,21 +58,20 @@ Underlying evaluation signals used in this run: <br>
 - `accuracy`: Grades final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
 - `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
-- `token_efficiency`: Compares token usage with and without the skill. <br>
 
 
 
 ## Evaluation Results: <br>
-| Dimension | Num | `claude-code` | `codex` |
+| Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
 | Security | 3 | 100% (+0%) | 100% (+0%) |
-| Correctness | 3 | 77% (+43%) | 97% (+57%) |
-| Discoverability | 3 | 67% (+50%) | 97% (+54%) |
-| Effectiveness | 3 | 77% (+43%) | 85% (+56%) |
-| Efficiency | 3 | 70% (+45%) | 93% (+46%) |
+| Correctness | 3 | 100% (+87%) | 100% (+60%) |
+| Discoverability | 3 | 92% (+44%) | 94% (+48%) |
+| Effectiveness | 3 | 100% (+75%) | 87% (+57%) |
+| Efficiency | 3 | 98% (+63%) | 95% (+45%) |
 
 ## Skill Version(s): <br>
-1.0.0 (source: pyproject.toml) <br>
+1.0.1 (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

@@ -20,6 +20,16 @@
 #
 # Usage:
 #   download_checkpoints.sh [--checkpoint-dir checkpoints]
+#                           [--model-sizes "2B"] [--with-t5-11b]
+#
+# Options:
+#   --checkpoint-dir DIR   Where to write checkpoints (default: checkpoints).
+#   --model-sizes "LIST"   Space-separated Cosmos-Predict2 base sizes to fetch,
+#                          from {2B, 14B} (default: 2B). Quote if more than one,
+#                          e.g. --model-sizes "2B 14B".
+#   --with-t5-11b          Also download google-t5/t5-11b (T5-XXL, ~45GB). Off by
+#                          default: AnomalyGen uses t5-large; t5-11b is only
+#                          needed when a config sets t5_model_name to it.
 #
 # Assumes the `cosmos-predict2` conda env is already active. Requires
 # HF_TOKEN exported. Idempotent — the upstream module is invoked only when
@@ -27,13 +37,25 @@
 set -euo pipefail
 
 ckpt_dir="checkpoints"
+model_sizes=(2B)
+with_t5_11b=0
+
+usage() { sed -n '21,32p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --checkpoint-dir) ckpt_dir="$2"; shift 2;;
-        -h|--help)        sed -n '2,12p' "$0"; exit 0;;
+        --model-sizes)    read -r -a model_sizes <<< "$2"; shift 2;;
+        --with-t5-11b)    with_t5_11b=1; shift;;
+        -h|--help)        usage; exit 0;;
         *) echo "error: unknown arg $1" >&2; exit 2;;
     esac
+done
+
+(( ${#model_sizes[@]} )) || { echo "error: --model-sizes cannot be empty" >&2; exit 2; }
+for size in "${model_sizes[@]}"; do
+    [[ "${size}" == "2B" || "${size}" == "14B" ]] \
+        || { echo "error: --model-sizes must be from {2B, 14B}, got '${size}'" >&2; exit 2; }
 done
 
 : "${HF_TOKEN:?HF_TOKEN must be exported (Hugging Face access token)}"
@@ -45,30 +67,40 @@ command -v python >/dev/null 2>&1 \
 mkdir -p "${ckpt_dir}"
 
 # Skip the upstream module call only if every artifact it would produce is
-# already on disk — avoids the unconditional NVDINOV2 wget overwrite.
-upstream_present=1
-for path in \
-    "${ckpt_dir}/nvidia/Cosmos-Predict2-2B-Text2Image/model.pt" \
-    "${ckpt_dir}/nvidia/Cosmos-Predict2-14B-Text2Image/model.pt" \
-    "${ckpt_dir}/google-t5/t5-large/config.json" \
-    "${ckpt_dir}/google-t5/t5-11b/config.json" \
-    "${ckpt_dir}/NVDINOV2/nv_dinov2_classification_model.ckpt" \
-    "${ckpt_dir}/nvidia/C-RADIO-V3/model.safetensors" \
-    "${ckpt_dir}/facebook/dinov2-large/config.json" \
-    "${ckpt_dir}/sam2/sam2.1_hiera_large.pt" \
-    "${ckpt_dir}/Qwen/Qwen3-VL-4B-Instruct/model-00001-of-00002.safetensors" \
+# already on disk — avoids the unconditional NVDINOV2 wget overwrite. The set
+# depends on the requested --model-sizes / --with-t5-11b.
+expect=()
+for size in "${model_sizes[@]}"; do
+    expect+=("${ckpt_dir}/nvidia/Cosmos-Predict2-${size}-Text2Image/model.pt")
+done
+expect+=(
+    "${ckpt_dir}/google-t5/t5-large/config.json"
+    "${ckpt_dir}/nvidia/Cosmos-Guardrail1/video_content_safety_filter/safety_filter.pt"
+    "${ckpt_dir}/nvidia/Cosmos-Guardrail1/face_blur_filter/Resnet50_Final.pth"
+    "${ckpt_dir}/NVDINOV2/nv_dinov2_classification_model.ckpt"
+    "${ckpt_dir}/nvidia/C-RADIO-V3/model.safetensors"
+    "${ckpt_dir}/facebook/dinov2-large/config.json"
+    "${ckpt_dir}/sam2/sam2.1_hiera_large.pt"
+    "${ckpt_dir}/Qwen/Qwen3-VL-4B-Instruct/model-00001-of-00002.safetensors"
     "${ckpt_dir}/Qwen/Qwen3-VL-4B-Instruct/model-00002-of-00002.safetensors"
-do
+)
+[[ "${with_t5_11b}" == "1" ]] && expect+=("${ckpt_dir}/google-t5/t5-11b/config.json")
+
+upstream_present=1
+for path in "${expect[@]}"; do
     [[ -f "${path}" ]] || { echo "[need] ${path}"; upstream_present=0; }
 done
 
 if [[ "${upstream_present}" == "0" ]]; then
     echo "[setup] HF auth"
     hf auth login --token "${HF_TOKEN}" --add-to-git-credential >/dev/null
-    echo "[fetch] python -m scripts.download_checkpoints --model_types text2image --model_sizes 2B 14B"
+    t5_flag=()
+    [[ "${with_t5_11b}" == "1" ]] && t5_flag=(--with_t5_11b)
+    echo "[fetch] python -m scripts.download_checkpoints --model_types text2image --model_sizes ${model_sizes[*]} ${t5_flag[*]}"
     CUDA_HOME="${CONDA_PREFIX:-}" python -m scripts.download_checkpoints \
         --model_types text2image \
-        --model_sizes 2B 14B \
+        --model_sizes "${model_sizes[@]}" \
+        "${t5_flag[@]}" \
         --checkpoint_dir "${ckpt_dir}"
 else
     echo "[skip] all upstream-handled artifacts present"

@@ -169,14 +169,21 @@ The script:
    - `checkpoints/nvidia/Cosmos-Predict2-14B-Text2Image/model.pt`
    - `checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt`
    - `checkpoints/nvidia/C-RADIO-V3/model.safetensors`
+   - `checkpoints/nvidia/Cosmos-Guardrail1/` (image guardrail — three
+     components: `video_content_safety_filter/safety_filter.pt`, the SigLIP
+     encoder snapshot, and `face_blur_filter/Resnet50_Final.pth`)
    - `checkpoints/sam2/sam2.1_hiera_large.pt`
    - `checkpoints/Qwen/Qwen3-VL-4B-Instruct/` (non-empty)
    - `checkpoints/facebook/dinov2-large/` (non-empty)
-   - `checkpoints/google-t5/t5-large/` or `checkpoints/google-t5/t5-11b/`
-     (at least one)
+   - `checkpoints/google-t5/t5-large/` **and** `checkpoints/google-t5/t5-11b/`
+     (both baked in — t5-large is the default encoder, t5-11b/T5-XXL is for
+     configs that select it via `ag_config.t5_model_name`)
 
 2. **Auto-downloads** any missing checkpoints via
-   `scripts/utilities/download_checkpoints.sh`. This requires
+   `scripts/utilities/download_checkpoints.sh --model-sizes "2B 14B" --with-t5-11b`
+   (both base sizes and both T5 variants are baked into the image; t5-large +
+   guardrail come by default, `--with-t5-11b` adds T5-XXL ~45 GB).
+   This requires
    `HF_TOKEN` to be exported and the `hf` CLI (`huggingface_hub >= 1.x`)
    in `PATH`. If you do
    not want auto-download, pass `--skip-download` and download manually

@@ -10,8 +10,12 @@ Read `references/setup.md` for the full checkpoint table, script behavior
 detail (idempotent skip logic, HF_TOKEN handling, SAM2/Qwen3-VL skip), and
 error handling. Summary:
 
-- ~140 GB total across 9 artifacts (2B/14B model, T5-large, T5-11B, RADIO,
-  NVDINOV2, DINOv2, SAM2, Qwen3-VL-4B)
+- Defaults fetch the 2B base + T5-large + guardrail/encoders (~40 GB). The 14B
+  base (`--model-sizes 14B`) and T5-11B (`--with-t5-11b`) are opt-in; the full
+  set is ~150 GB. Artifacts: 2B/14B model, T5-large/T5-11B, Cosmos-Guardrail1,
+  RADIO, NVDINOV2, DINOv2, SAM2, Qwen3-VL-4B.
+- Pass `--model-sizes <2B|14B>` to `check.sh`/`download_checkpoints.sh` matching
+  this run's `model_size` — the 2B-only default otherwise skips a 14B download
 - `HF_TOKEN` must be exported; `download_checkpoints.sh` refuses to start if unset
 - `check.sh` exits 0 if all present, 1 with a remediation list if not — run it first
 

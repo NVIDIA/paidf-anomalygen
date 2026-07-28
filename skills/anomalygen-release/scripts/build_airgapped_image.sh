@@ -126,21 +126,21 @@ check_file        "${ckpt_dir}/nvidia/Cosmos-Predict2-2B-Text2Image/model.pt"
 check_file        "${ckpt_dir}/nvidia/Cosmos-Predict2-14B-Text2Image/model.pt"
 check_file        "${ckpt_dir}/NVDINOV2/nv_dinov2_classification_model.ckpt"
 check_file        "${ckpt_dir}/nvidia/C-RADIO-V3/model.safetensors"
+# Cosmos-Guardrail1 (image guardrail) — the Dockerfile COPYs this dir, so a
+# missing guardrail would fail the build; verify its three components here.
+check_file        "${ckpt_dir}/nvidia/Cosmos-Guardrail1/video_content_safety_filter/safety_filter.pt"
+check_file        "${ckpt_dir}/nvidia/Cosmos-Guardrail1/face_blur_filter/Resnet50_Final.pth"
+check_nonempty_dir "${ckpt_dir}/nvidia/Cosmos-Guardrail1/video_content_safety_filter/models--google--siglip-so400m-patch14-384"
 check_file        "${ckpt_dir}/sam2/sam2.1_hiera_large.pt"
 check_nonempty_dir "${ckpt_dir}/facebook/dinov2-large"
 check_nonempty_dir "${ckpt_dir}/facebook"
 check_nonempty_dir "${ckpt_dir}/Qwen/Qwen3-VL-4B-Instruct"
 
-# T5: at least one variant required (both are copied by the Dockerfile)
-t5_ok=0
-{ [[ -d "${ckpt_dir}/google-t5/t5-large" ]] && [[ -n "$(ls -A "${ckpt_dir}/google-t5/t5-large" 2>/dev/null)" ]]; } \
-    && { t5_ok=1; printf "  [ok]      %s\n" "${ckpt_dir}/google-t5/t5-large"; }
-{ [[ -d "${ckpt_dir}/google-t5/t5-11b" ]] && [[ -n "$(ls -A "${ckpt_dir}/google-t5/t5-11b" 2>/dev/null)" ]]; } \
-    && { t5_ok=1; printf "  [ok]      %s\n" "${ckpt_dir}/google-t5/t5-11b"; }
-if [[ "${t5_ok}" == "0" ]]; then
-    printf "  [missing] %s\n" "${ckpt_dir}/google-t5/{t5-large,t5-11b} (need at least one)"
-    missing=$((missing + 1))
-fi
+# T5: the airgapped image bakes in both variants (Dockerfile COPYs the whole
+# google-t5 dir), so both must be present — t5-large (the default encoder) and
+# t5-11b / T5-XXL (for configs that select it via ag_config.t5_model_name).
+check_nonempty_dir "${ckpt_dir}/google-t5/t5-large"
+check_nonempty_dir "${ckpt_dir}/google-t5/t5-11b"
 
 if [[ "${missing}" -gt 0 ]]; then
     echo
@@ -153,8 +153,11 @@ if [[ "${missing}" -gt 0 ]]; then
     echo "=== downloading missing checkpoints ==="
     echo "    (requires HF_TOKEN exported and huggingface-cli in PATH)"
     echo
+    # The airgapped image bakes in both base sizes and both T5 variants, so fetch
+    # 2B+14B and add --with-t5-11b (the wrapper defaults to 2B + t5-large only).
+    # t5-large + guardrail come down by default.
     bash scripts/utilities/download_checkpoints.sh \
-        --checkpoint-dir "${ckpt_dir}"
+        --checkpoint-dir "${ckpt_dir}" --model-sizes "2B 14B" --with-t5-11b
     echo
     echo "=== re-checking checkpoints after download ==="
     # Re-run the checks; abort if still missing (e.g. download failed).
