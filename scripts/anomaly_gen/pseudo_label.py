@@ -37,12 +37,6 @@ import typing
 if "HF_HOME" not in os.environ:
     # CR model will be downloaded to ./checkpoints if HF_HOME is not specified.
     os.environ["HF_HOME"] = "checkpoints"
-if "VLLM_LOGGING_LEVEL" not in os.environ:
-    # Suppress vLLM logging.
-    os.environ["VLLM_LOGGING_LEVEL"] = "WARNING"
-if "VLLM_WORKER_MULTIPROC_METHOD" not in os.environ:
-    # For vllm>=0.10.2, https://github.com/vllm-project/vllm/issues/8893.
-    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 import numpy as np
 import torch
 import yaml
@@ -265,15 +259,6 @@ def save_coco_annotations(
 
 def main(args: argparse.Namespace):
     log.info(f"{args}")
-
-    # Validate the args.
-    if not args.no_caption:
-        if (28 % args.captioner_num_gpus) != 0:
-            raise ValueError(
-                "The number of GPUs for captioning must be divisible by 28 "
-                "(attention head size of the Cosmos Reason model). "
-                f"Received: --captioner_num_gpus={args.captioner_num_gpus}"
-            )
 
     # Load images and masks.
     ori_image_paths = sorted(pl_utils.get_image_paths(args.ori_image_dir))
@@ -515,21 +500,19 @@ def main(args: argparse.Namespace):
         captioner_args = {
             "prompt_data": prompt_data,
             "model_name": "nvidia/Cosmos-Reason1-7B",
-            "limit_mm_per_prompt": {"image": 3, "video": 0},
             # Default parameters from the CR1 captioning example.
             "temperature": float(args.captioner_temperature),
-            "n": 1,
             "max_tokens": int(args.captioner_max_tokens),
             "seed": int(args.captioner_seed),
-            "tensor_parallel_size": int(args.captioner_num_gpus),
+            "num_gpus": int(args.captioner_num_gpus),
         }
         log.info(f"The captioner arguments:\n{json.dumps(captioner_args, indent=4)}")
         log.info("Initializing the Cosmos Reason captioner...")
         captioner = pl_caption.Captioner(**captioner_args)
         log.info("Successfully initialized the captioner.")
 
-        total_len = len(captions_list) // int(args.captioner_num_gpus)
-        batch_size = int(args.captioner_num_gpus)
+        batch_size = max(1, int(args.captioner_num_gpus))
+        total_len = -(-len(captions_list) // batch_size)
         for idx in tqdm(
             range(0, len(captions_list), batch_size),
             desc="Processing captions",

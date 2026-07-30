@@ -20,7 +20,7 @@ Both Dockerfiles also expose **air-gapped** targets (`airgapped-product` /
   for `--gpus` support.
 - Host driver compatible with CUDA 12.8 (R555+).
 - ~40 GB free disk for the image build (PyTorch + CUDA + flash-attn + apex +
-  vLLM + transformer-engine). The final `develop` image is ~16 GB.
+  transformer-engine). The final `develop` image is ~16 GB.
 
 ## Targets
 

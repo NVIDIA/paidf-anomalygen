@@ -5,7 +5,7 @@ case is self-contained in its own folder and follows the same seven-notebook flo
 
 > **Prerequisite — build the `cosmos-predict2` environment first.** These tutorials
 > assume the `cosmos-predict2` conda environment already exists (PyTorch + CUDA 12.8,
-> flash-attn, Transformer Engine, Apex, vLLM, …). If it does not, run the top-level
+> flash-attn, Transformer Engine, Apex, …). If it does not, run the top-level
 > [`../0-setup-cuda128.ipynb`](../0-setup-cuda128.ipynb) once to create it, then start
 > with `UC<n>/0-setup.ipynb`.
 

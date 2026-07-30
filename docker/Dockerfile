@@ -5,7 +5,7 @@
 # PAIDF AnomalyGen Docker Image
 #
 # Single-stage build: combines the compile-heavy dependencies (flash-attn,
-# transformer-engine, apex, opencv-python-headless, vllm, requirements) and
+# transformer-engine, apex, opencv-python-headless, requirements) and
 # the application layer in one Dockerfile. The pre-built CUDA-extension
 # wheels live in the project's GitLab PyPI registry; CI passes a token-bearing
 # index URL via --build-arg GITLAB_PYPI_INDEX_URL (see .gitlab-ci.yml). For
@@ -45,7 +45,6 @@ ARG OPENCV_VER=4.13.0.92
 ARG OPENCV_GH_BRANCH=92
 ARG APEX_VER=0.1
 ARG APEX_GH_COMMIT=466e164bfd9548b3026c1f3a1c296bed8ef55c43
-ARG VLLM_VER=0.19.1
 ARG REQUIREMENTS=requirements-conda-cuda128.txt
 
 # Pre-compiled wheels for flash-attn / transformer-engine / apex /
@@ -147,8 +146,6 @@ RUN if [ -n "$GITLAB_PYPI_INDEX_URL" ]; then \
       cd / && rm -rf /tmp/opencv-python; \
     fi
 
-RUN pip install --no-cache-dir vllm==${VLLM_VER}
-
 # Install full pip requirements (cheap once the heavy compiles above are cached)
 COPY ${REQUIREMENTS} /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt && rm -f /tmp/requirements.txt \
@@ -158,7 +155,7 @@ RUN pip install -r /tmp/requirements.txt && rm -f /tmp/requirements.txt \
 RUN pip uninstall -y av
 
 # Register pip-installed nvidia/*/lib paths with the dynamic linker so non-torch
-# CUDA consumers (vllm, flash-attn, TE) can find cuBLAS / cuDNN / cuSPARSE etc.
+# CUDA consumers (flash-attn, TE) can find cuBLAS / cuDNN / cuSPARSE etc.
 # without LD_LIBRARY_PATH gymnastics. (torch itself has RPATH and doesn't need this.)
 RUN { for d in /usr/local/lib/python3.12/dist-packages/nvidia/*/lib; do echo "$d"; done; \
     } > /etc/ld.so.conf.d/cosmos.conf && ldconfig

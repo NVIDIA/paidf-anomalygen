@@ -58,7 +58,7 @@ from pseudo_label.infosam import dataset as infosam_dataset  # noqa: E402
 # ===========================================================================
 @pytest.fixture(scope="module")
 def Captioner():
-    """Import pseudo_label.caption with its heavy deps (vllm/transformers/…)
+    """Import pseudo_label.caption with its heavy deps (torch/transformers/…)
     stubbed. postprocess_response uses none of them, and patch.dict restores
     sys.modules on teardown so no other test is affected."""
     def _stub(name, **attrs):
@@ -68,9 +68,12 @@ def Captioner():
         return m
 
     stubs = {
-        "vllm": _stub("vllm", LLM=object, RequestOutput=object, SamplingParams=object),
         "qwen_vl_utils": _stub("qwen_vl_utils", process_vision_info=lambda *a, **k: None),
-        "transformers": _stub("transformers", AutoProcessor=object),
+        "transformers": _stub(
+            "transformers",
+            AutoProcessor=object,
+            Qwen2_5_VLForConditionalGeneration=object,
+        ),
         "transformers.models": _stub("transformers.models"),
         "transformers.models.qwen2_5_vl": _stub(
             "transformers.models.qwen2_5_vl", Qwen2_5_VLProcessor=object
