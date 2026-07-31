@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+from pathlib import Path
+
 import numpy as np
 import torch
 from sam2.build_sam import build_sam2
@@ -23,10 +26,18 @@ from cosmos_predict2.metrics import utils
 from cosmos_predict2.models.ag_modules.backbone_v2.ptm_util import load_pretrained_weights
 from roi_generate.utils import to_rgb_uint8
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def build_sam2_predictor(device):
+    # The config name is resolved by SAM2's Hydra search path (package-
+    # relative and therefore CWD-independent), but the checkpoint is a
+    # filesystem path — anchor it to the repo root so the pipeline works
+    # from any CWD, overridable via ANOMALYGEN_SAM2_CHECKPOINT.
     sam_config = "configs/sam2.1/sam2.1_hiera_l.yaml"
-    sam_checkpoint = "checkpoints/sam2/sam2.1_hiera_large.pt"
+    sam_checkpoint = os.environ.get(
+        "ANOMALYGEN_SAM2_CHECKPOINT", str(_REPO_ROOT / "checkpoints" / "sam2" / "sam2.1_hiera_large.pt")
+    )
     sam2_model = build_sam2(sam_config, sam_checkpoint, device=device)
     return SAM2ImagePredictor(sam2_model)
 
@@ -59,7 +70,7 @@ class ROIGenerateModels:
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
         )
-        self.current_image_id = None
+        self._current_image = None
 
     def _get_model(self, model_name: str):
         if model_name not in self.models:
@@ -134,13 +145,11 @@ class ROIGenerateModels:
         """
         Safely set the image for the SAM2 predictor, skipping if it's the same image.
         """
-        if image is not None:
-            new_image_id = id(image)
-
-            if self.current_image_id != new_image_id:
-                image_np = to_rgb_uint8(image)
-                model.set_image(image_np)
-                self.current_image_id = new_image_id
+        # Reuse embeddings when the same image object comes back; retain a
+        # reference so its identity stays stable across calls.
+        if image is not None and image is not self._current_image:
+            model.set_image(to_rgb_uint8(image))
+            self._current_image = image
 
     def _forward_cradiov3_feat_map(self, model, image_pil):
         with torch.no_grad():

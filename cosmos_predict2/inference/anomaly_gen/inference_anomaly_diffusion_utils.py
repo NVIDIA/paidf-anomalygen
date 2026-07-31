@@ -50,6 +50,41 @@ def _load_condition_mask(mask_filename, mask_array=None, mask_mode=None):
         return fp.convert("L")
 
 
+def _apply_image_guardrail(model, reconstructed_images):
+    """Run the image content-safety guardrail on each generated image.
+
+    The guardrail runner is created once on the pipeline (model.pipe) when
+    `guardrail_config.image_enabled` is set; if it is disabled or unavailable,
+    every image is treated as safe and left untouched.
+
+    Any image flagged unsafe is replaced in place with a black image so it
+    cannot propagate into the dataset (or the validation KPI).
+
+    Returns:
+        list[bool]: per-image safe verdict, aligned with `reconstructed_images`.
+    """
+    runner = getattr(getattr(model, "pipe", None), "image_guardrail_runner", None)
+    if runner is None:
+        return [True] * len(reconstructed_images)
+
+    from cosmos_predict2.auxiliary.guardrail.common import presets as guardrail_presets
+
+    safe_flags = []
+    for i, image in enumerate(reconstructed_images):
+        is_safe = guardrail_presets.run_image_guardrail(image, runner)
+        safe_flags.append(is_safe)
+        if not is_safe and isinstance(image, Image.Image):
+            # Replace the unsafe image with a black image of the same size/mode.
+            reconstructed_images[i] = Image.new(image.mode, image.size)
+    num_unsafe = safe_flags.count(False)
+    if num_unsafe:
+        log.critical(
+            f"Image guardrail flagged {num_unsafe}/{len(safe_flags)} generated image(s) as unsafe; "
+            "replaced with black image(s)."
+        )
+    return safe_flags
+
+
 def inpaint_image(inpaint_condition, model):
     """
     Main flow for inpainting a batch of images
@@ -107,7 +142,14 @@ def inpaint_image(inpaint_condition, model):
             reconstructed_images = _postprocess(inpaint_condition, diffusion_data_batch)
             prev_reconstructed_images = reconstructed_images
             prev_batch = diffusion_data_batch
-    
+
+    # Post-generation image guardrail. Runs on every generated image for both
+    # training validation and inference (both reach this single chokepoint).
+    # Unsafe images are replaced with a black image so they cannot enter the
+    # dataset, and the per-image safe/unsafe verdict is recorded on
+    # inpaint_condition.guardrail_safe for the caller to log / persist.
+    inpaint_condition.guardrail_safe = _apply_image_guardrail(model, reconstructed_images)
+
     # Calculate PSNR
     inpaint_condition.PSNR = [
         compute_psnr_in_mask(reconstructed_images[i], original_images[i], original_masks[i])

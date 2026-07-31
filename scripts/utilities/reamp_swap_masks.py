@@ -16,7 +16,8 @@
 """Swap mask_filename paths in a JSONL to point at a fresh AMP output.
 
 Assumes `run_auto_roi_amp.py` was invoked with `--n_seeds <K> --seed <N>`
-into --new-amp-dir, producing <new-amp-dir>/<name>/<TEXTURE>+<ANOMALY>/seed{0..K-1}.png
+into --new-amp-dir, producing
+<new-amp-dir>/<name>/<TEXTURE>+<ANOMALY>/<submask_stem>__seed{0..K-1}.png
 for every record the original AMP pass emitted. For each JSONL row, derives
 (name, full_type, seed_index) from the existing mask_filename and rewrites it
 to the matching path under --new-amp-dir, **preserving the original seed
@@ -30,6 +31,7 @@ re-rolled with a fresh base seed.
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 
@@ -50,9 +52,15 @@ def main():
     with args.output.open("w") as fp:
         for row in rows:
             old = pathlib.Path(row["mask_filename"])
-            # old path is <amp>/<name>/<full_type>/seed<N>.png
+            # old path is <amp>/<name>/<full_type>/<submask_stem>__seed<N>.png
             name, full_type = old.parent.parent.name, old.parent.name
-            seed_stem = old.stem if args.seed_index is None else f"seed{args.seed_index}"
+            if args.seed_index is None:
+                seed_stem = old.stem
+            else:
+                # Strip only a trailing __seed<N>: a submask stem may itself
+                # contain "__seed" mid-name.
+                base = re.sub(r"__seed\d+$", "", old.stem)
+                seed_stem = f"{base}__seed{args.seed_index}"
             new = args.new_amp_dir / name / full_type / f"{seed_stem}.png"
             if not new.exists():
                 print(f"warn: missing re-AMPed mask {new}", file=sys.stderr)

@@ -34,11 +34,11 @@ Multi-phase pipeline (0–7). The `mode` flag selects which phases run.
 | 0 | Verify / download pretrained checkpoints | all |
 | 1 | Fine-tune on `dataset_dir` | `full`, `finetune_only` |
 | 2 | Prepare inference JSONL (AMP routing) | `full`, `inference_only` |
-| 3 | SDG → `original/` (targets `num_SDG`; smaller if Phase 2 dropped a defect — see Error handling) | `full`, `inference_only` |
-| 4 | Eval `original/` → `per_sample.csv` + `eval.log`; merges `nn_score` into `SDG_result.csv` | `full`, `inference_only` |
-| 5 | Per-sample `(guidance, crop_ratio)` search → `rounds/round_NN/` (SDG + eval per round) | `full`, `inference_only` |
-| 6 | Assemble best-of-rounds → `searched/` (stitch only; carries over per-sample nn). Plus `rounds/search_summary.csv` | `full`, `inference_only` |
-| 7 | Filter `searched/` by `nn_threshold` (default `0.4`); regen dropped samples up to 5× via re-AMP; fallback best-per-defect; canonical eval → `searched/{per_sample.csv, eval.log}` | `full`, `inference_only` |
+| 3 | SDG → `original/` (targets `num_SDG`) | `full`, `inference_only` |
+| 4 | Eval `original/` → per-sample nn + `eval.log` | `full`, `inference_only` |
+| 5 | Per-sample `(guidance, crop_ratio)` search → `rounds/round_NN/` | `full`, `inference_only` |
+| 6 | Assemble best-of-rounds → `searched/` (stitch only) | `full`, `inference_only` |
+| 7 | Filter `searched/` by `nn_threshold`; regen dropped via re-AMP; canonical eval | `full`, `inference_only` |
 
 Run every phase through to completion without mid-run pauses. Collect all
 required parameters up front. Run every command from the repo root.
@@ -138,7 +138,7 @@ CKPT=<checkpoint_dir>      # required iff MODE=inference_only; auto-derived afte
 STEP=<iter>                # required iff MODE=inference_only; auto-derived after Phase 1 when MODE=full
 NUM_SDG=<N>
 DEFECT_DESC=<defect_spec.jsonl>
-DEFECTS=(T+A T+B)          # TEXTURE+TYPE names. For mode=inference_only, derive from ${CKPT}/ag_config.yaml → dataloader_train.dataset.anomaly_types (also printed by validate_checkpoint.py). For mode=full, take from DEFECT_DESC entries. See references/inference.md §Pre-flight checkpoint validation.
+DEFECTS=(T+A T+B)          # TEXTURE+TYPE. inference_only: from ${CKPT}/ag_config.yaml → dataloader_train.dataset.anomaly_types (or validate_checkpoint.py). full: from DEFECT_DESC. See references/inference.md §Pre-flight checkpoint validation.
 NUM_SEARCH_RUN=${num_search_run:-3}
 NN_THRESHOLD=${nn_threshold:-0.4}
 MODEL_SIZE=<2b|14b>
@@ -178,24 +178,26 @@ if [[ "${ANOMALYGEN_PRODUCT_MODE:-}" == "1" ]]; then
 fi
 ```
 
-`--validation-jsonl` is forwarded only when the user supplied one; preflight
-then verifies every `defect_spec` type appears in the file and that
-`image_filename` / `mask_filename` paths exist. Auto-generated validation
-JSONLs are caught upstream by `allocate_samples.py`, which refuses to
-allocate 0 entries to any defect.
-
-For `MODE=finetune_only`, omit `--num-sdg` if the user did not supply one.
+`--validation-jsonl` is forwarded only when user-supplied; preflight then
+verifies every `defect_spec` type appears and its `image_filename` /
+`mask_filename` paths exist (auto-generated JSONLs are caught upstream by
+`allocate_samples.py`, which refuses 0 entries for any defect). For
+`MODE=finetune_only`, omit `--num-sdg` if not supplied.
 
 ---
 
 ## Phase 0 — checkpoints
 
 Read `references/finetune.md §Phase 0` for HF_TOKEN requirements and what
-gets downloaded (~140 GB). Verify first; download only what is missing.
+gets downloaded. Both scripts default to the **2B** base + t5-large; pass
+`--model-sizes ${MODEL_SIZE^^}` so the chain checks and fetches the base size
+this run actually uses (`2b`→`2B`, `14b`→`14B`) — otherwise a `14b` run
+silently passes the 2B-only check and never downloads its checkpoint. Verify
+first; download only what is missing.
 
 ```bash
-${ANOMALYGEN_SCRIPTS}/check.sh \
-    || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh
+${ANOMALYGEN_SCRIPTS}/check.sh --model-sizes ${MODEL_SIZE^^} \
+    || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh --model-sizes ${MODEL_SIZE^^}
 ```
 
 ---
@@ -375,16 +377,15 @@ python3 -m scripts.utilities.assemble_searched \
 Phase 7 **runs by default** (`nn_threshold=0.4`) on every `mode=full` and
 `mode=inference_only` invocation. Pass `nn_threshold=0` to skip Phase 7.
 
-Filter `searched/` by `nn_threshold`. Dropped samples are regenerated
-via re-AMP (fresh `(clean, submask)` pairing in the same defect type)
-for up to 5 attempts. If still short, falls back to best-scoring
-non-passing regens, then to dropped originals. Final bucket always
-equals `num_SDG`.
-
-`filter_with_regen.py` runs the final `run_eval.sh` internally — this
-is the only eval against `searched/`. Read `references/inference.md
-§Phase 7` for the regen mechanics, source-column tracing, and
-`regens/regen_summary.csv` schema.
+Filter `searched/` by `nn_threshold`; dropped samples are regenerated via
+re-AMP (fresh `(clean, submask)` pairing, same defect type) up to 5×, then
+fall back to best non-passing regens, then dropped originals — final bucket
+always equals `num_SDG`. `--allocation` (prep-testcase's `allocation.json`)
+makes regen target the intended per-defect counts; without it a bucket left
+short (e.g. by an interrupted SDG) can't be topped up. `filter_with_regen.py`
+runs the final `run_eval.sh` internally — the only eval against `searched/`.
+Read `references/inference.md §Phase 7` for regen mechanics, source-column
+tracing, and the `regens/regen_summary.csv` schema.
 
 ```bash
 python3 -m scripts.utilities.filter_with_regen \
@@ -392,6 +393,7 @@ python3 -m scripts.utilities.filter_with_regen \
     --per-sample-csv ${SEARCHED}/per_sample.csv \
     --threshold ${NN_THRESHOLD} \
     --num-sdg ${NUM_SDG} \
+    --allocation ag_inference/${NAME}/allocation.json \
     --rounds-dir ${ROUNDS} \
     --regens-dir ${REGENS} \
     --dataset-dir ${DATASET_DIR} \
@@ -409,33 +411,25 @@ python3 -m scripts.utilities.filter_with_regen \
 
 Every eval'd bucket carries the same triad: `SDG_result.csv` (gen params +
 `nn_score`), `per_sample.csv` (per-sample nn + mnn), `eval.log` (FID /
-per-defect avg).
-
-```
-results/<name>/
-├── original/         # Phase 3 + 4 — {reconstructed_image/, SDG_result.csv, per_sample.csv, eval.log}
-├── searched/         # final bucket (Phase 6 stitch + Phase 7 filter+regen+eval)
-│                     #   triad as above; SDG_result.csv adds `source` column
-├── rounds/           # Phase 5
-│   ├── round_NN/{draws.json, testcase.jsonl, sdg/{images, triad}}
-│   └── search_summary.csv          # per-sample best-of-round audit
-└── regens/           # Phase 7
-    ├── regen_NN/{allocation.json, amp_samples.json, amp/, testcase.jsonl, sdg/{images, triad}}
-    └── regen_summary.csv           # per-sample source + prev_nn + nn audit
-```
+per-defect avg). Buckets under `results/<name>/`: `original/` (Phase 3+4);
+`searched/` (final — Phase 6 stitch + Phase 7 filter+regen+eval, its
+`SDG_result.csv` adds a `source` column); `rounds/round_NN/` +
+`rounds/search_summary.csv` (Phase 5); `regens/regen_NN/` +
+`regens/regen_summary.csv` (Phase 7). See `references/inference.md` for the
+full tree and per-file schemas.
 
 ## Verification
 
 1. `${ORIGINAL}/reconstructed_image/` has up to `num_SDG` images.
-2. `${SEARCHED}/reconstructed_image/` count == `num_SDG` (Phase 7 fills with regen + best-per-defect fallback if needed).
+2. `${SEARCHED}/reconstructed_image/` count == `num_SDG` (Phase 7 fills via regen + best-per-defect fallback).
 3. `${ROUNDS}/search_summary.csv` has one row per sample.
-4. `original/eval.log`, each `rounds/round_NN/sdg/eval.log`, and `searched/eval.log` contain per-type `nn_score`, `mnn_score`, and `fid`.
-5. `${REGENS}/regen_summary.csv` exists when Phase 7 ran; `passed_threshold` column reports per-sample status, `prev_nn` vs `nn_score` reveals which samples regen actually improved.
+4. `eval.log` in `original/`, each `rounds/round_NN/sdg/`, and `searched/` has per-type `nn_score`, `mnn_score`, `fid`.
+5. `${REGENS}/regen_summary.csv` exists when Phase 7 ran (`passed_threshold` = per-sample status; `prev_nn` vs `nn_score` shows which regens improved).
 
 ## Error handling
 
 - `dataset_dir` missing per-type mask dir → allocation scans zero and errors.
-- AMP output short of allocation → `build_jsonl.py` warns and writes what's available (JSONL shorter than `num_SDG` by that delta). Check `run_auto_roi_amp.py` logs for `NO_DETECTION` / `FAILED`. A defect with **zero** AMP outputs is dropped warn-only; if **every** defect produces zero, `build_jsonl.py` halts with `error: 0 entries written`.
-- SDG failure mid-round in Phase 5 → halts; re-run resumes from the next round (rounds are append-only).
+- AMP output short of allocation → `build_jsonl.py` warns and writes what's available (check `run_auto_roi_amp.py` logs for `NO_DETECTION` / `FAILED`); a defect with **zero** outputs is dropped warn-only, but if **every** defect is zero it halts with `error: 0 entries written`.
+- SDG failure mid-round in Phase 5 → halts; re-run resumes from the next round (append-only).
 - `mode=inference_only` with a `step` not on a `save_iter` boundary → `torch.load` FileNotFoundError; `ls ${CKPT}/checkpoints/model/iter_*.pt` to find valid steps.
 - See `references/finetune.md` and `references/inference.md` for phase-specific error handling.

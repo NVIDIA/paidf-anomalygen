@@ -9,10 +9,16 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 CC-BY-4.0 AND Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to fine-tune diffusion models and generate synthetic anomaly images for manufacturing defect detection in few-shot scenarios. <br>
+Developers and engineers use this skill to fine-tune diffusion models and generate synthetic anomaly images for few-shot industrial defect detection scenarios. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Yes] <br>
+**Credential Type(s):** [API key] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
@@ -20,7 +26,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [Setup](references/setup.md) <br>
-- [Fine-tune](references/finetune.md) <br>
+- [Finetune](references/finetune.md) <br>
 - [Prep Testcase](references/prep-testcase.md) <br>
 - [SDG Inference](references/sdg-inference.md) <br>
 - [Inference](references/inference.md) <br>
@@ -30,19 +36,19 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Files, Configuration instructions] <br>
+**Output Type(s):** [Shell commands, Files, Analysis] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [None] <br>
+**Other Properties Related to Output:** [Generated synthetic anomaly images, CSV evaluation reports, and per-sample score logs] <br>
 
 ## Evaluation Agents Used: <br>
-- `claude-code` <br>
-- `codex` <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 internal evaluation tasks with 2 attempts each; pass threshold 50%. All tasks were positive skill-activation cases. <br>
+Evaluated against 3 internal evaluation tasks (all positive skill-activation cases). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -59,21 +65,20 @@ Underlying evaluation signals used in this run: <br>
 - `accuracy`: Grades final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
 - `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
-- `token_efficiency`: Compares token usage with and without the skill. <br>
 
 
 
 ## Evaluation Results: <br>
-| Dimension | Num | `claude-code` | `codex` |
+| Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
-| Security | 6 | 100% (+0%) | 100% (+0%) |
-| Correctness | 6 | 76% (+2%) | 60% (+0%) |
-| Discoverability | 6 | 86% (+2%) | 68% (+2%) |
-| Effectiveness | 6 | 46% (-7%) | 30% (-12%) |
-| Efficiency | 6 | 75% (+5%) | 59% (+3%) |
+| Security | 3 | 100% (+0%) | 100% (+0%) |
+| Correctness | 3 | 80% (+80%) | 67% (+67%) |
+| Discoverability | 3 | 94% (+44%) | 73% (+31%) |
+| Effectiveness | 3 | 30% (+27%) | 34% (+31%) |
+| Efficiency | 3 | 93% (+51%) | 94% (+54%) |
 
 ## Skill Version(s): <br>
-1.0.0 (source: pyproject.toml) <br>
+1.0.1 (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

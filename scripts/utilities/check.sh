@@ -17,17 +17,33 @@
 # when all are present, 1 otherwise.
 #
 # Usage:
-#   check.sh [--checkpoint-dir checkpoints]
+#   check.sh [--checkpoint-dir checkpoints] [--model-sizes "2B"]
+#
+# Options:
+#   --checkpoint-dir DIR   Where checkpoints live (default: checkpoints).
+#   --model-sizes "LIST"   Space-separated Cosmos-Predict2 base sizes to verify,
+#                          from {2B, 14B} (default: 2B). Must match what was
+#                          downloaded. Quote if more than one, e.g. "2B 14B".
 set -euo pipefail
 
 ckpt_dir="checkpoints"
+model_sizes=(2B)
+
+usage() { sed -n '19,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --checkpoint-dir) ckpt_dir="$2"; shift 2;;
-        -h|--help)        sed -n '2,7p' "$0"; exit 0;;
+        --model-sizes)    read -r -a model_sizes <<< "$2"; shift 2;;
+        -h|--help)        usage; exit 0;;
         *) echo "error: unknown arg $1" >&2; exit 2;;
     esac
+done
+
+(( ${#model_sizes[@]} )) || { echo "error: --model-sizes cannot be empty" >&2; exit 2; }
+for size in "${model_sizes[@]}"; do
+    [[ "${size}" == "2B" || "${size}" == "14B" ]] \
+        || { echo "error: --model-sizes must be from {2B, 14B}, got '${size}'" >&2; exit 2; }
 done
 
 missing=0
@@ -43,8 +59,9 @@ check_nonempty_dir() {  # path, remediation
 
 dl="bash scripts/utilities/download_checkpoints.sh"
 
-check_file        "${ckpt_dir}/nvidia/Cosmos-Predict2-2B-Text2Image/model.pt"   "$dl"
-check_file        "${ckpt_dir}/nvidia/Cosmos-Predict2-14B-Text2Image/model.pt"  "$dl"
+for size in "${model_sizes[@]}"; do
+    check_file    "${ckpt_dir}/nvidia/Cosmos-Predict2-${size}-Text2Image/model.pt"  "$dl"
+done
 # Either T5 variant satisfies training (configurable via ag_config.t5_model_name).
 t5_large_present=0
 t5_11b_present=0
@@ -56,6 +73,11 @@ if [[ "${t5_large_present}" == 1 || "${t5_11b_present}" == 1 ]]; then
 else
     miss "${ckpt_dir}/google-t5/{t5-large,t5-11b}" "$dl  (one variant suffices)"
 fi
+# Cosmos-Guardrail1: the image guardrail needs the content-safety classifier,
+# its SigLIP encoder snapshot, and the face-blur filter.
+check_file         "${ckpt_dir}/nvidia/Cosmos-Guardrail1/video_content_safety_filter/safety_filter.pt"  "$dl"
+check_file         "${ckpt_dir}/nvidia/Cosmos-Guardrail1/face_blur_filter/Resnet50_Final.pth"           "$dl"
+check_nonempty_dir "${ckpt_dir}/nvidia/Cosmos-Guardrail1/video_content_safety_filter/models--google--siglip-so400m-patch14-384"  "$dl"
 check_file        "${ckpt_dir}/NVDINOV2/nv_dinov2_classification_model.ckpt"    "$dl"
 check_file        "${ckpt_dir}/nvidia/C-RADIO-V3/model.safetensors"             "$dl"
 check_nonempty_dir "${ckpt_dir}/facebook/dinov2-large"                           "$dl"

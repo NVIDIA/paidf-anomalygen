@@ -300,6 +300,8 @@ def process_text2roi_sample(sample, defect_prompts, detector, sam, output_dir,
                 placed_np = cv2.imread(str(final_mask_path), cv2.IMREAD_GRAYSCALE)
                 ov = make_amp_overlay(img_np, roi_mask, placed_np, bbox, point)
                 Image.fromarray(ov).save(overlay_path)
+
+                seed_results[seed_i] = {"status": "OK" if placed_ok else "SMALL"}
             else:
                 seed_results[seed_i] = {"status": "FAILED"}
 

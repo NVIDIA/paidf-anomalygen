@@ -185,8 +185,9 @@ Generate airgapped docker image
 
 The agent will check whether all required checkpoints are present in
 `checkpoints/`, download any that are missing (requires `HF_TOKEN` exported),
-and then build from `docker/Dockerfile.cuda128.airgapped`. You can also run the
-helper directly:
+and then build the `airgapped-product` / `airgapped-develop` target of
+`docker/Dockerfile` (checkpoints are passed via a `ckpts` named build context).
+You can also run the helper directly:
 
 ```bash
 # auto-downloads missing checkpoints then builds
@@ -243,6 +244,8 @@ This series of tutorials walks you through the following steps:
 3. (Optional) Automatic mask placement
 4. Generating synthetic anomaly data
 5. Pseudo-labeling on generated data
+
+For complete, run-from-scratch walkthroughs of each reference use case, see the per-use-case tutorials under [`tutorial/notebooks/Usecases/`](tutorial/notebooks/Usecases/) — **UC1** (PCB, `cad`), **UC2** (metal surface, `free`), and **UC3** (phone screen, `text`). Each follows the same seven-notebook flow (setup → dataset preparation → training → auto mask placement → generation → pseudo-labeling → agentic flow).
 
 ## Usage
 
@@ -357,7 +360,7 @@ Validate using `tao-daft validate --path <output> --version 3.0 --raw image`.
 #### Prepare Your Config File for Training
 
 Before post-training, specify your experiment configurations in a `.yaml` file.
-You can use [ag_configs/MeiweiPCB_NVDINOV2_2B_512.yaml](ag_configs/MeiweiPCB_NVDINOV2_2B_512.yaml) and [.agents/skills/anomalygen/assets/ag_config.yaml](.agents/skills/anomalygen/assets/ag_config.yaml) as examples. You can also refer to [.agents/skills/anomalygen/references/finetune.md](.agents/skills/anomalygen/references/finetune.md) for more details.
+You can use [ag_configs/UC3_phone_NVDINOV2_2B_512.yaml](ag_configs/UC3_phone_NVDINOV2_2B_512.yaml) and [.agents/skills/anomalygen/assets/ag_config.yaml](.agents/skills/anomalygen/assets/ag_config.yaml) as examples. You can also refer to [.agents/skills/anomalygen/references/finetune.md](.agents/skills/anomalygen/references/finetune.md) for more details.
 
 The key sections of the config are:
 
@@ -388,6 +391,10 @@ torchrun --nproc_per_node=1 --master_port=12341 -m scripts.anomaly_gen.ag_train 
 -- experiment=predict2_anomaly_gen_ddp_2b
 ```
 
+> **Note:**
+> - The `-- experiment=...` at the end uses a bare `--` **separator**, not a `--experiment=...` flag. Everything after `--` is a Hydra config override passed through to the training entrypoint; writing `--experiment=...` fails with `unrecognized arguments`.
+> - Transformer Engine and Apex are **optional**. If they are not installed, the code falls back to a local implementation and prints a warning at startup — this is expected and safe to ignore.
+
 ##### Training 14B Pipeline
 
 ```bash=
@@ -398,7 +405,6 @@ torchrun --nproc_per_node=1 --master_port=12341 -m scripts.anomaly_gen.ag_train 
 ```
 
 * The required training time varies from dataset to dataset. Because there is no reliable convergence metric, use an image-logging callback to visually assess whether the model is well-trained.
-* For the UC1 dataset, the model trained for 14000 steps with `batch_size=2` and `lr=2e-2`.
 
 ##### Multi-GPU Training (Experimental)
 
@@ -426,26 +432,23 @@ The SDG process is split into two steps:
 
 ##### Testcase Preparation
 
-In this step, prepare a `.jsonl` file that specifies all the configurations that will be used to generate synthetic data. One line represents one generation.
-The codebase supports different kinds of augmentation. One augmentation option is to randomly form combinations of arguments.
+In this step, prepare a `.jsonl` file that specifies every generation to run — one line per generated image (see [Definition on Generation Configurations](#definition-on-generation-configurations) for the fields).
 
-You can use any method you want to create this `.jsonl` file. An example script for the MIIC dataset is provided:
+The quickest way is `create_testcase.py` — a **sample script** that reads the per-defect masks in your dataset, pairs each with a **randomly chosen** defect-free clean image of the same texture, applies light random augmentation (shift / rotation / morphology), and writes one JSONL line per generation. Using UC3 (phone screen) as the example:
 
 ```bash=
-python -m scripts.anomaly_gen.create_testcase --OK_image_path datasets/UC1_data/IC/clean_image --NG_mask_path datasets/UC1_data/IC/mask --name UC1
+python -m scripts.anomaly_gen.create_testcase \
+    --dataset_dir datasets/UC3_data \
+    --name UC3
 ```
 
-After running this, an example of the testcase will be generated at `ag_inference/UC1/testcase_16x_guidance=7.0_crop_ratio=2.0_poisson_blend=False.jsonl`.
+`create_testcase.py` needs the per-defect masks under `<dataset_dir>/<texture>/mask/<anomaly_type>/` and defect-free backgrounds under `<dataset_dir>/<texture>/clean_image/` (multi-texture safe), using the folder names as the `<texture>+<anomaly_type>` label. The result is written to `ag_inference/UC3/testcase_<...>.jsonl` — the exact path is printed at the end; pass it as `--input_data_path` in the [Batch Generation](#batch-generation) step below. One line per generation:
 
 ```jsonl=
-{"image_filename": "datasets/UC1_data/IC/clean_image/IC_00201.jpg", "mask_filename": "datasets/UC1_data/IC/mask/bridge/IC_00002_mask.jpg", "anomaly_type": "IC+bridge", "guidance": 5.0, "num_steps": 35, "crop_and_paste": true, "crop_ratio": 1.0, "crop_grid_X": "none", "crop_grid_Y": "none", "num_generated_images": 1, "poisson_blend": false, "shift_values": "-34,-6", "rotation_angle": 32, "morph_operation": "open", "iteration_generation_max_instance": 1}
-{"image_filename": "datasets/UC1_data/passive_component/clean_image/pc_00689.jpg", "mask_filename": "datasets/UC1_data/passive_component/mask/excess_solder/pc_00002_mask.jpg", "anomaly_type": "passive_component+excess_solder", "guidance": 7.0, "num_steps": 35, "crop_and_paste": true, "crop_ratio": 1.5, "crop_grid_X": "none", "crop_grid_Y": "none", "num_generated_images": 1, "poisson_blend": false, "shift_values": "-93,-80", "rotation_angle": 35, "morph_operation": "close", "iteration_generation_max_instance": 1}
+{"image_filename": "datasets/UC3_data/Phone/clean_image/0005.png", "mask_filename": "datasets/UC3_data/Phone/mask/oil/Oil_0041_mask.png", "anomaly_type": "Phone+oil", "guidance": 7.0, "num_steps": 35, "crop_and_paste": true, "crop_ratio": 2.0, "crop_grid_X": "none", "crop_grid_Y": "none", "num_generated_images": 1, "poisson_blend": false, "shift_values": "-12,49", "rotation_angle": 98, "morph_operation": "open", "iteration_generation_max_instance": 5}
 ```
 
-> **Note:**
-    - Augmentation should be used with care. For instance, some of the anomalies are location-dependent (bridging occurs only across IC pin), in this case, you should not be using shifting unless you have confirmed that the shifted position is also reasonable for growing anomalies.
-    - `crop_ratio` and `crop_grid_*` are mutually exclusive. When `crop_ratio` is provided, `crop_grid_*` will be ignored.
-    - All fields must be provided with values in configurations.
+> **This is only a quick-start sample.** Because both the mask/clean pairing **and** the augmentation it applies (random shift / rotation / morphology) are unconstrained, `create_testcase.py` does **not** guarantee each defect lands in a meaningful spot — a random shift can even move a location-dependent anomaly (e.g. IC bridging, which only occurs across pins) off a valid position. It just gets you a runnable JSONL fast. For rigorous, controlled placement — confining defects to valid regions (`cad` CAD-mask locations, `text` prompt-located regions) and fitting each mask to its background — use **Automatic Mask Placement (AMP)** (see the [Automatic Mask Placement](#automatic-mask-placement) section below), or place/draw the masks by hand. The per-use-case tutorials under [`tutorial/notebooks/Usecases/`](tutorial/notebooks/Usecases/) walk through the AMP-based flow for each reference dataset. (This quick path also assumes each mask already matches its clean image's resolution, as with UC3's fixed framing.)
 
 ##### Definition on Generation Configurations
 
@@ -470,11 +473,14 @@ Skip these fields to use default values.
     * crop_grid_Y: int = None. Size of Cropped grid in y-axis.
     * crop_ratio: float = None. The ratio for cropping grid compared to masked region's bbox. When enabled, `crop_grid_*` will be deactivated.
     * poisson_blend: bool = False. Whether to use poisson blending when pasting back to a clean image.
+
+    > **Note:** `crop_ratio` and `crop_grid_X`/`crop_grid_Y` are mutually exclusive. When `crop_ratio` is provided, `crop_grid_X`/`crop_grid_Y` are ignored.
+
 * **Mask Augmentation**
     * shift_values: str = None. The shifted value for masked region (Format: <X>,<Y> split by comma).
     * rotation_angle: int = None. The rotated angle for masked region.
     * morph_operation: str = None. The morph options for mask. Supports: ['dilate', 'erode', 'open', 'close'].
-    * iterative_generation_max_instance: int = 5. Maximum number of instances to iteratively generate for a single image.
+    * iteration_generation_max_instance: int = 5. Maximum number of instances to iteratively generate for a single image.
 
 ##### Batch Generation
 
@@ -483,7 +489,6 @@ After preparing the test cases, use the following script for generation. This sc
 ###### 2B Pipeline Generation
 
 ```bash=
-time \
 torchrun --nproc_per_node=1 -m scripts.anomaly_gen.synthetic_dataset_generation \
 --config=cosmos_predict2/configs/base/ag_config.py \
 --ag_checkpoint_dir <YOUR_CHECKPOINT_DIR> \
@@ -497,7 +502,6 @@ torchrun --nproc_per_node=1 -m scripts.anomaly_gen.synthetic_dataset_generation 
 ###### 14B Pipeline Generation
 
 ```bash=
-time \
 torchrun --nproc_per_node=1 -m scripts.anomaly_gen.synthetic_dataset_generation \
 --config=cosmos_predict2/configs/base/ag_config.py \
 --ag_checkpoint_dir <YOUR_CHECKPOINT_DIR> \
@@ -505,7 +509,7 @@ torchrun --nproc_per_node=1 -m scripts.anomaly_gen.synthetic_dataset_generation 
 --input_data_path <YOUR_TESTCASE>.jsonl \
 --output_image_path <YOUR_OUTPUT_PATH> \
 --seed 0 \
--- experiment=predict2_anomaly_gen_fsdp_14b
+-- experiment=predict2_anomaly_gen_ddp_14b
 ```
 
 ###### Multi-GPU Inference
@@ -517,7 +521,6 @@ During inference, the script automatically disables Fully Sharded Data Parallel 
 Example (8 GPUs, 2B pipeline):
 
 ```bash=
-time \
 torchrun --nproc_per_node=8 --master_port=12341 -m scripts.anomaly_gen.synthetic_dataset_generation \
 --config=cosmos_predict2/configs/base/ag_config.py \
 --ag_checkpoint_dir <YOUR_CHECKPOINT_DIR> \
@@ -526,14 +529,13 @@ torchrun --nproc_per_node=8 --master_port=12341 -m scripts.anomaly_gen.synthetic
 --output_image_path <YOUR_OUTPUT_PATH> \
 --num_workers 4 \
 --seed 0 \
--- experiment=predict2_anomaly_gen_fsdp_2b
+-- experiment=predict2_anomaly_gen_ddp_2b
 ```
 
 > **Note:**
     - Use `--nproc_per_node` equal to the number of GPUs you want to participate in inference.
     - Make sure all ranks can access the same testcase JSONL and output directory path.
     - `timing_summary.json` reports the aggregated wall-clock timing across ranks, while `SDG_result.csv` contains the merged generated-image rows from all ranks.
-    `--ref_root` is optional. If specified, the script computes experimental distribution metrics between SDG and reference images and saves them to `SDG_metrics.csv`. The reference images should follow the same format as the training data.
 
 ### KPI Evaluation and Filtering
 
@@ -553,11 +555,11 @@ Example:
 
 ```bash
 python -m scripts.anomaly_gen.evaluate \
-    --real_path datasets/UC1_data \
-    --generated_path results/UC1/example_output \
-    --anomaly_types IC+bridge \
-                    passive_component+excess_solder \
-                    passive_component+missing
+    --real_path datasets/UC3_data \
+    --generated_path results/UC3/example_output \
+    --anomaly_types Phone+oil \
+                    Phone+scratch \
+                    Phone+stain
 ```
 
 #### Filter Generated Samples
@@ -600,13 +602,13 @@ Example:
 
 ```bash
 python -m scripts.anomaly_gen.filter \
-    --real_path datasets/UC1_data \
-    --generated_path results/UC1/example_output \
-    --output_path results/UC1/filter \
+    --real_path datasets/UC3_data \
+    --generated_path results/UC3/example_output \
+    --output_path results/UC3/filter \
     --drop_ratio 0.2 \
-    --anomaly_types IC+bridge \
-                    passive_component+excess_solder \
-                    passive_component+missing
+    --anomaly_types Phone+oil \
+                    Phone+scratch \
+                    Phone+stain
 ```
 
 ### Pseudo Labeling
@@ -627,7 +629,7 @@ Available arguments for the pseudo-labeling script are:
 - `gen_image_dir`: The directory containing the generated anomaly images.
 - `mask_dir`: The directory containing the masks used for generation.
 - `csv_path`: The path to the CSV file which is generated by PAIDF AnomalyGen.
-- `caption_prompt_path`: The path to the caption prompt file used by the captioner. If not provided, a default prompt will be used. Refer to `pseudo_label/default_caption_prompt.yaml` for the details.
+- `captioner_prompt_path`: The path to the caption prompt file used by the captioner. If not provided, a default prompt will be used. Refer to `pseudo_label/default_caption_prompt.yaml` for the details.
 - `output_dir`: The directory where the pseudo-labeled data will be saved.
 - `no_caption`: If set, the captioning step will be skipped. This saves time if captions are not needed.
 - `dbscan_eps`: DBSCAN epsilon (eps) parameter for clustering masks. Default is `0.2`.
@@ -651,11 +653,11 @@ Example usage:
 
 ```bash
 python -m scripts.anomaly_gen.pseudo_label \
-    --ori_image_dir=results/UC1/example_output/original_image \
-    --gen_image_dir=results/UC1/example_output/reconstructed_image \
-    --mask_dir=results/UC1/example_output/original_mask \
-    --csv_path=results/UC1/example_output/SDG_result.csv \
-    --output_dir=results/UC1/pseudo_labeling \
+    --ori_image_dir=results/UC3/example_output/original_image \
+    --gen_image_dir=results/UC3/example_output/reconstructed_image \
+    --mask_dir=results/UC3/example_output/original_mask \
+    --csv_path=results/UC3/example_output/SDG_result.csv \
+    --output_dir=results/UC3/pseudo_labeling \
     --captioner_num_gpus=1
 ```
 
@@ -663,7 +665,7 @@ python -m scripts.anomaly_gen.pseudo_label \
 
 #### Motivation
 
-The existing augmentation capabilities in PAIDF AnomalyGen (available in **Batch Inference for SDG** and **Testcase Preparation**) apply transformations to entire mask images. While this approach works well for scattered defects that can appear arbitrarily across the whole image, it has limitations for more complex use cases, such as:
+PAIDF AnomalyGen can also augment a mask by transforming the **whole mask image** — shifting, rotating, and morphing it (the `shift_values`, `rotation_angle`, and `morph_operation` fields). While this works well for scattered defects that can appear arbitrarily across the whole image, it has limitations for more complex use cases, such as:
 
 - **Repeated and ordered foreground objects**: Products with multiple identical components (for example, circuit boards, pharmaceutical packaging).
 - **Defects on specific foreground objects**: Anomalies that only occur on particular regions or parts (for example, scratches on specific panels).
@@ -988,6 +990,53 @@ python3 -m scripts.anomaly_gen.automatic_mask_placement \
 > **Note**: Setting a specific parameter (for example, `shift_x_range`) in the config file disables dynamic calculation for that parameter only. Other parameters remain dynamic unless explicitly set.
 
 For executable examples with visualizations and step-by-step results, refer to [tutorial/notebooks/2-optional-auto-mask-placement.ipynb](tutorial/notebooks/2-optional-auto-mask-placement.ipynb) (sections 2.5 / 2.6 contain worked examples).
+
+## Guardrail
+
+AnomalyGen ships a **post-generation image content-safety guardrail**. Every
+image produced by the pipeline — during both training validation and SDG
+inference — is screened by the SigLIP-based content-safety classifier from
+`nvidia/Cosmos-Guardrail1`. Any image flagged unsafe is **replaced with a black
+image** so it cannot enter the dataset, and the per-image verdict is recorded in
+the `guardrail_pass` column of `SDG_result.csv` (`1` = passed, `0` = blocked).
+
+**The image guardrail is ON by default.** The SigLIP model is kept resident on
+the GPU (~3.3 GB), so the added latency is small — about **+2% per image**
+(roughly +20 ms on an H100). It requires the `nvidia/Cosmos-Guardrail1`
+checkpoint (fetched by `scripts/download_checkpoints.py`); if the checkpoint is
+missing it logs an error and disables itself rather than aborting generation.
+
+> **VRAM note.** Because the guardrail is built in the model's `__init__`, the
+> ~3.3 GB stays resident on the GPU for the **entire training run** (it screens
+> every validation image), not just at inference. On a config that already sits
+> near the memory ceiling (e.g. 14B or a large batch) this can tip it into OOM.
+> If you hit that, offload the guardrail (`image_offload_model_to_cpu=True`,
+> ~450 ms/image) or turn it off for that run (`ANOMALYGEN_IMAGE_GUARDRAIL=0` /
+> `image_enabled=False`). The e2e default was validated at 2B / image_size 512.
+
+> Note: for typical industrial-anomaly images (e.g. SEM/grayscale textures) the
+> classifier returns "safe" for essentially everything, so the guardrail rarely
+> blocks anything — it mainly acts as a safety gate plus an audit record.
+
+### Turning the guardrail off
+
+Either of the following disables it (the environment variable overrides the config):
+
+```bash
+# Per-run, no config edit — also accepts 0 / false / off
+export ANOMALYGEN_IMAGE_GUARDRAIL=0
+
+# Or via a config override on any training / inference command
+--opts model.config.pipe_config.guardrail_config.image_enabled=False
+```
+
+To force it on the same way, use `ANOMALYGEN_IMAGE_GUARDRAIL=1` (accepts
+`1`/`true`/`on`). Related knobs in `CosmosGuardrailConfig`:
+
+| Field | Default | Purpose |
+|---|---|---|
+| `image_enabled` | `True` | Turn the image guardrail on/off. |
+| `image_offload_model_to_cpu` | `False` | Keep SigLIP resident on GPU (fast). Set `True` to offload it CPU↔GPU per image — saves ~3.3 GB VRAM but adds ~450 ms/image. |
 
 ## Acknowledgments
 

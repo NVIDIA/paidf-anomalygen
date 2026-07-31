@@ -29,7 +29,7 @@ Usage:
         --input_data_path=ag_inference/peppermint_validation.jsonl \
         --output_image_path=inference_output/multiview \
         --seed=0 \
-        -- experiment=predict2_anomaly_gen_multiview_fsdp_2b
+        -- experiment=predict2_anomaly_gen_multiview_ddp_2b
 """
 
 import argparse
@@ -186,6 +186,7 @@ def demo(args):
             "morph_operation",
             "PSNR",
             "index",
+            "guardrail_pass",
         ])
 
         anomaly_name_counter = defaultdict(int)
@@ -256,6 +257,13 @@ def demo(args):
                             inpaint_condition.morph_operation[idx],
                             avg_psnr,
                             inpaint_condition.index[idx],
+                            # 1 only if this sample passed the guardrail in every view.
+                            # `guardrail_safe` is always set by inpaint_multiview_image
+                            # (a [num_views][B] nested list), so index it directly.
+                            1 if all(
+                                inpaint_condition.guardrail_safe[view_idx][idx]
+                                for view_idx in range(num_views)
+                            ) else 0,
                         ])
 
     log.success(f"Multi-view SDG complete! Results saved to {args.output_image_path}")

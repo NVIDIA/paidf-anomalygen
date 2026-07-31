@@ -19,7 +19,8 @@ Scans <dataset_dir>/<TEXTURE>/{anomaly_image,mask}/<ANOMALY>/ and prints:
   - detected TEXTURE+ANOMALY types with image/mask counts
   - warnings for missing directories or unpaired image/mask files
 
-Exits 1 if no anomaly types are detected; otherwise 0.
+Exits 1 if no anomaly types are detected, or if any structure/pairing
+issues are found (they would crash training mid-iteration); otherwise 0.
 """
 import argparse
 import os
@@ -88,6 +89,10 @@ def main():
 
     if not anomaly_types:
         print("error: no anomaly types detected", file=sys.stderr)
+        sys.exit(1)
+    if issues:
+        print(f"error: {len(issues)} issue(s) found — training would crash "
+              f"mid-iteration on these; fix them and re-run", file=sys.stderr)
         sys.exit(1)
 
 

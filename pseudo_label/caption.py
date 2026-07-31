@@ -18,10 +18,10 @@ import typing
 from datetime import datetime
 from pathlib import Path
 
+import torch
 from qwen_vl_utils import process_vision_info
-from transformers import AutoProcessor
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor
-from vllm import LLM, RequestOutput, SamplingParams
 
 
 class Captioner:
@@ -31,12 +31,10 @@ class Captioner:
         self,
         prompt_data: typing.Dict[str, str],
         model_name="nvidia/Cosmos-Reason1-7B",
-        limit_mm_per_prompt={"image": 3, "video": 0},
         temperature=0.01,
-        n=1,
         max_tokens=4096,
         seed=42,
-        tensor_parallel_size=1,
+        num_gpus=1,
     ):
         """Initialize the Captioner with model and prompt configuration.
 
@@ -45,25 +43,53 @@ class Captioner:
                 'user_prompt'.
             model_name: The name of the pre-trained model to use. Defaults to
                 `"nvidia/Cosmos-Reason1-7B"`.
-            limit_mm_per_prompt: Limits for multi-modal inputs. Defaults to
-                `{"image": 3, "video": 0}`.
             temperature: Sampling temperature. Defaults to `0.01`.
-            n: Number of responses to generate. Defaults to `1`.
             max_tokens: Maximum number of tokens to generate. Defaults to
                 `4096`.
             seed: Random seed for reproducibility. Defaults to `42`.
+            num_gpus: Number of GPUs to shard the model across. Values `> 1`
+                use accelerate's `device_map="auto"`. Defaults to `1`.
         """
         self.system_prompt = prompt_data["system_prompt"]
         self.user_prompt = prompt_data["user_prompt"]
         self.processor: Qwen2_5_VLProcessor = AutoProcessor.from_pretrained(model_name)
-        self.llm = LLM(
-            model=model_name,
-            limit_mm_per_prompt=limit_mm_per_prompt,
-            tensor_parallel_size=tensor_parallel_size,
-        )
-        self.sampling_params = SamplingParams(
-            temperature=temperature, n=n, max_tokens=max_tokens, seed=seed
-        )
+        # Batched generation on a decoder-only model requires left padding;
+        # with the default right padding the pad tokens land between the prompt
+        # and the continuation and the shorter samples decode to garbage.
+        self.processor.tokenizer.padding_side = "left"
+        self.model = self._load_model(model_name, num_gpus)
+        self.model.eval()
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.seed = seed
+
+    @staticmethod
+    def _load_model(model_name: str, num_gpus: int):
+        """Load the VLM, preferring flash-attn but tolerating its absence."""
+        kwargs = {
+            "dtype": torch.bfloat16,
+            "device_map": "auto" if num_gpus > 1 else "cuda",
+        }
+        try:
+            return Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_name, attn_implementation="flash_attention_2", **kwargs
+            )
+        except (ImportError, ValueError):
+            # flash-attn is an optional CUDA extension. Fall back to the PyTorch
+            # SDPA kernels, which are always available, rather than failing.
+            return Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_name, attn_implementation="sdpa", **kwargs
+            )
+
+    def _generation_kwargs(self) -> dict:
+        """Build `generate()` kwargs, mapping temperature onto the sampling mode."""
+        kwargs = {
+            "max_new_tokens": self.max_tokens,
+            "do_sample": self.temperature > 0,
+        }
+        if kwargs["do_sample"]:
+            kwargs["temperature"] = self.temperature
+        return kwargs
 
     def replace_placeholders(self, prompt: str, meta: dict) -> str:
         """Replace placeholders in the prompt with actual values from meta.
@@ -83,12 +109,15 @@ class Captioner:
         """Post-process the response to ensure it matches the number of bboxes."""
         start_tag = "<answer>"
         end_tag = "</answer>"
-        try:
-            start_index = response.find(start_tag) + len(start_tag)
-            end_index = response.rfind(end_tag)
-            content = response[start_index:end_index].strip()
-        except (ValueError, IndexError):
+        # str.find / rfind return -1 when the tag is absent (they never raise),
+        # so guard explicitly instead of relying on a dead try/except. Without
+        # this, a response lacking the tags produced a corrupted slice
+        # (response[-1 + len(start_tag) : -1]) rather than falling back to raw.
+        start_pos = response.find(start_tag)
+        end_pos = response.rfind(end_tag)
+        if start_pos == -1 or end_pos == -1 or end_pos < start_pos + len(start_tag):
             return response
+        content = response[start_pos + len(start_tag):end_pos].strip()
         # The delimiter is a blank line followed by the bolded "Anomaly " text
         delimiter = "\n\n**Anomaly "
         parts = content.split(delimiter)
@@ -114,7 +143,8 @@ class Captioner:
         metas: typing.List[dict],
     ) -> typing.List[str]:
         """Generate a caption for the given image and mask."""
-        llm_inputs = []
+        texts = []
+        batch_images = []
         for ori_image_path, ori_mask_path, gen_image_path, meta in zip(
             ori_image_paths, ori_mask_paths, gen_image_paths, metas
         ):
@@ -136,22 +166,35 @@ class Captioner:
                     ],
                 },
             ]
-            prompt = self.processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+            texts.append(
+                self.processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
             )
-            image_inputs, video_inputs = process_vision_info(
+            image_inputs, _ = process_vision_info(
                 messages, return_video_kwargs=False
             )
-            mm_data = {}
-            if image_inputs is not None:
-                mm_data["image"] = image_inputs
-            if video_inputs is not None:
-                mm_data["video"] = video_inputs
-            llm_inputs.append({"prompt": prompt, "multi_modal_data": mm_data})
-        outputs: typing.List[RequestOutput] = self.llm.generate(
-            llm_inputs, sampling_params=self.sampling_params, use_tqdm=False
+            # The processor matches one flat image list against the image
+            # placeholders across the whole batch, so extend rather than nest.
+            if image_inputs:
+                batch_images.extend(image_inputs)
+        inputs = self.processor(
+            text=texts,
+            images=batch_images or None,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.model.device)
+        if self.seed is not None:
+            torch.manual_seed(self.seed)
+        with torch.inference_mode():
+            generated_ids = self.model.generate(**inputs, **self._generation_kwargs())
+        # Left padding makes the prompt width uniform, so one offset trims all.
+        prompt_len = inputs.input_ids.shape[1]
+        responses = self.processor.batch_decode(
+            generated_ids[:, prompt_len:],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
         )
-        responses = [output.outputs[0].text for output in outputs]
         # Post-process the response to ensure it matches the number of bounding boxes.
         return [
             self.postprocess_response(response, int(meta["num_bboxes"]))

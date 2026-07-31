@@ -1,8 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # =============================================================================
 # PAIDF AnomalyGen Docker Image
 #
 # Single-stage build: combines the compile-heavy dependencies (flash-attn,
-# transformer-engine, apex, opencv-python-headless, vllm, requirements) and
+# transformer-engine, apex, opencv-python-headless, requirements) and
 # the application layer in one Dockerfile. The pre-built CUDA-extension
 # wheels live in the project's GitLab PyPI registry; CI passes a token-bearing
 # index URL via --build-arg GITLAB_PYPI_INDEX_URL (see .gitlab-ci.yml). For
@@ -31,7 +34,7 @@
 # =============================================================================
 
 ARG PYTORCH_BASE=nvidia/cuda:12.8.2-devel-ubuntu24.04
-FROM ${PYTORCH_BASE}
+FROM ${PYTORCH_BASE} AS base
 
 ARG TORCH_VER=2.10.0
 ARG TORCHVISION_VER=0.25.0
@@ -42,7 +45,6 @@ ARG OPENCV_VER=4.13.0.92
 ARG OPENCV_GH_BRANCH=92
 ARG APEX_VER=0.1
 ARG APEX_GH_COMMIT=466e164bfd9548b3026c1f3a1c296bed8ef55c43
-ARG VLLM_VER=0.19.1
 ARG REQUIREMENTS=requirements-conda-cuda128.txt
 
 # Pre-compiled wheels for flash-attn / transformer-engine / apex /
@@ -144,8 +146,6 @@ RUN if [ -n "$GITLAB_PYPI_INDEX_URL" ]; then \
       cd / && rm -rf /tmp/opencv-python; \
     fi
 
-RUN pip install --no-cache-dir vllm==${VLLM_VER}
-
 # Install full pip requirements (cheap once the heavy compiles above are cached)
 COPY ${REQUIREMENTS} /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt && rm -f /tmp/requirements.txt \
@@ -155,7 +155,7 @@ RUN pip install -r /tmp/requirements.txt && rm -f /tmp/requirements.txt \
 RUN pip uninstall -y av
 
 # Register pip-installed nvidia/*/lib paths with the dynamic linker so non-torch
-# CUDA consumers (vllm, flash-attn, TE) can find cuBLAS / cuDNN / cuSPARSE etc.
+# CUDA consumers (flash-attn, TE) can find cuBLAS / cuDNN / cuSPARSE etc.
 # without LD_LIBRARY_PATH gymnastics. (torch itself has RPATH and doesn't need this.)
 RUN { for d in /usr/local/lib/python3.12/dist-packages/nvidia/*/lib; do echo "$d"; done; \
     } > /etc/ld.so.conf.d/cosmos.conf && ldconfig
@@ -219,3 +219,75 @@ WORKDIR /workspace/paidf-anomalygen
 
 ENV PYTHONPATH=/workspace/paidf-anomalygen
 ENV ANOMALYGEN_SCRIPTS=/workspace/paidf-anomalygen/scripts/utilities
+
+# ---------------------------------------------------------------------------
+# product: same image as base, plus ANOMALYGEN_PRODUCT_MODE=1 and production
+# code locked read-only. Build with `--target product`.
+# ---------------------------------------------------------------------------
+FROM base AS product
+
+USER root
+ENV ANOMALYGEN_PRODUCT_MODE=1
+
+# Lock production code + key files read-only (runtime/data dirs stay writable).
+RUN for d in automatic_mask_placement cosmos_predict2 pseudo_label roi_generate imaginaire \
+             scripts/anomaly_gen scripts/utilities skills; do \
+        [ ! -e "$d" ] || { chown -R root:root "$d" && chmod -R a-w "$d"; }; \
+    done && \
+    for f in README.md CLAUDE.md docker/Dockerfile* requirements*.txt cosmos-predict2-cuda*.yaml; do \
+        [ ! -e "$f" ] || { chown root:root "$f" && chmod a-w "$f"; }; \
+    done
+
+USER anomalygen
+
+CMD [ "/bin/bash" ]
+
+# ---------------------------------------------------------------------------
+# Air-gapped variants: same image as product/develop, plus checkpoints baked
+# into the layers so the container runs with no network and no volume mounts.
+#
+# Checkpoints are supplied via a named build context `ckpts` rather than the
+# main build context, so they bypass the repo `.dockerignore`.
+#
+#   docker buildx build --target airgapped-product \
+#       --build-context ckpts=./checkpoints \
+#       -f docker/Dockerfile -t paidf-anomalygen-airgapped:<tag> .
+# ---------------------------------------------------------------------------
+FROM product AS airgapped-product
+
+COPY --from=ckpts --chown=anomalygen:anomalygen README.md                             /workspace/paidf-anomalygen/checkpoints/README.md
+COPY --from=ckpts --chown=anomalygen:anomalygen sam2                                  /workspace/paidf-anomalygen/checkpoints/sam2
+COPY --from=ckpts --chown=anomalygen:anomalygen NVDINOV2                              /workspace/paidf-anomalygen/checkpoints/NVDINOV2
+COPY --from=ckpts --chown=anomalygen:anomalygen google-t5                             /workspace/paidf-anomalygen/checkpoints/google-t5
+COPY --from=ckpts --chown=anomalygen:anomalygen facebook                              /workspace/paidf-anomalygen/checkpoints/facebook
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/C-RADIO-V3                     /workspace/paidf-anomalygen/checkpoints/nvidia/C-RADIO-V3
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/Cosmos-Predict2-2B-Text2Image  /workspace/paidf-anomalygen/checkpoints/nvidia/Cosmos-Predict2-2B-Text2Image
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/Cosmos-Predict2-14B-Text2Image /workspace/paidf-anomalygen/checkpoints/nvidia/Cosmos-Predict2-14B-Text2Image
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/Cosmos-Guardrail1              /workspace/paidf-anomalygen/checkpoints/nvidia/Cosmos-Guardrail1
+COPY --from=ckpts --chown=anomalygen:anomalygen Qwen                                  /workspace/paidf-anomalygen/checkpoints/Qwen
+
+CMD [ "/bin/bash" ]
+
+# airgapped-develop: develop (== base) + checkpoints baked in.
+FROM base AS airgapped-develop
+
+COPY --from=ckpts --chown=anomalygen:anomalygen README.md                             /workspace/paidf-anomalygen/checkpoints/README.md
+COPY --from=ckpts --chown=anomalygen:anomalygen sam2                                  /workspace/paidf-anomalygen/checkpoints/sam2
+COPY --from=ckpts --chown=anomalygen:anomalygen NVDINOV2                              /workspace/paidf-anomalygen/checkpoints/NVDINOV2
+COPY --from=ckpts --chown=anomalygen:anomalygen google-t5                             /workspace/paidf-anomalygen/checkpoints/google-t5
+COPY --from=ckpts --chown=anomalygen:anomalygen facebook                              /workspace/paidf-anomalygen/checkpoints/facebook
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/C-RADIO-V3                     /workspace/paidf-anomalygen/checkpoints/nvidia/C-RADIO-V3
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/Cosmos-Predict2-2B-Text2Image  /workspace/paidf-anomalygen/checkpoints/nvidia/Cosmos-Predict2-2B-Text2Image
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/Cosmos-Predict2-14B-Text2Image /workspace/paidf-anomalygen/checkpoints/nvidia/Cosmos-Predict2-14B-Text2Image
+COPY --from=ckpts --chown=anomalygen:anomalygen nvidia/Cosmos-Guardrail1              /workspace/paidf-anomalygen/checkpoints/nvidia/Cosmos-Guardrail1
+COPY --from=ckpts --chown=anomalygen:anomalygen Qwen                                  /workspace/paidf-anomalygen/checkpoints/Qwen
+
+CMD [ "/bin/bash" ]
+
+# ---------------------------------------------------------------------------
+# develop (DEFAULT target): the base image as-is (non-root anomalygen),
+# interactive bash. Last stage, so a plain `docker build` builds this.
+# ---------------------------------------------------------------------------
+FROM base AS develop
+
+CMD [ "/bin/bash" ]

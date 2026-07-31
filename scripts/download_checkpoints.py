@@ -70,6 +70,13 @@ def parse_args():
     parser.add_argument(
         "--verify_md5", action="store_true", default=False, help="Verify MD5 checksums of existing files."
     )
+    parser.add_argument(
+        "--with_t5_11b",
+        action="store_true",
+        default=False,
+        help="Also download google-t5/t5-11b (T5-XXL, ~45GB). Off by default: AnomalyGen "
+        "uses t5-large; t5-11b is only needed when a config sets t5_model_name to it.",
+    )
     args = parser.parse_args()
     return args
 
@@ -207,11 +214,20 @@ def main(args):
         download_model(args.checkpoint_dir, repo_id, verify_md5=args.verify_md5)
 
     # Download T5 model
-    download_model(args.checkpoint_dir, "google-t5/t5-11b", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"])
+    if args.with_t5_11b:
+        download_model(
+            args.checkpoint_dir, "google-t5/t5-11b", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"]
+        )
     download_model(args.checkpoint_dir, "google-t5/t5-large", verify_md5=args.verify_md5, ignore_patterns=["tf_model.h5"])
 
-    # Download the guardrail models
-    # download_model(args.checkpoint_dir, "nvidia/Cosmos-Guardrail1", verify_md5=args.verify_md5)
+    # Download the guardrail models.
+    # Cosmos-Guardrail1 carries the SigLIP-based content-safety classifier
+    # (video_content_safety_filter/) used by the post-generation image guardrail
+    # (and the face-blur filter). The SigLIP encoder weights are bundled inside
+    # this repo, so no separate google/siglip download is needed.
+    download_model(args.checkpoint_dir, "nvidia/Cosmos-Guardrail1", verify_md5=args.verify_md5)
+    # Llama-Guard-3-8B powers the *text* (prompt) guardrail only; uncomment if
+    # you also enable the text guardrail (guardrail_config.enabled=True).
     # download_model(
     #     args.checkpoint_dir, "meta-llama/Llama-Guard-3-8B", verify_md5=args.verify_md5, ignore_patterns=["original/*"]
     # )

@@ -167,7 +167,7 @@ Run the guard preflight before GPU actions in Product Mode:
 
 ```bash
 if [[ "${ANOMALYGEN_PRODUCT_MODE:-}" == "1" ]]; then
-    python3 scripts/preflight.py \
+    python3 skills/anomalygen-guard/scripts/preflight.py \
         --mode <full|inference_only|finetune_only> \
         --name <experiment_name> \
         --dataset-dir <dataset_dir> \
@@ -186,7 +186,7 @@ skip message so accidental calls do not block development workflows.
 For refine-round validation:
 
 ```bash
-python3 scripts/preflight.py \
+python3 skills/anomalygen-guard/scripts/preflight.py \
     --mode inference_only \
     --name <experiment_name> \
     --dataset-dir <dataset_dir> \
@@ -200,7 +200,7 @@ python3 scripts/preflight.py \
 For output completeness before eval:
 
 ```bash
-python3 scripts/preflight.py \
+python3 skills/anomalygen-guard/scripts/preflight.py \
     --mode inference_only \
     --name <experiment_name> \
     --dataset-dir <dataset_dir> \
@@ -277,3 +277,4 @@ Release containers:
 - Production code must be non-writable.
 - Runtime paths, generated images, `SDG_result.csv`, caches, datasets, and
   checkpoints must remain writable.
+

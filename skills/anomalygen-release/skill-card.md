@@ -1,5 +1,5 @@
 ## Description: <br>
-Build and validate PAIDF AnomalyGen product and develop Docker containers from docker/Dockerfile.cuda128. <br>
+Build and validate PAIDF AnomalyGen product and develop Docker containers from docker/Dockerfile. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,34 +9,38 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers building, validating, and shipping AnomalyGen CUDA 12.8 Docker containers for product and develop release workflows, including standard and air-gapped deployment variants. <br>
+Developers and engineers building, validating, and delivering AnomalyGen CUDA 12.8 Docker containers for product release and air-gapped deployment. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Yes] <br>
+**Credential Type(s):** [API key] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [SKILL.md](SKILL.md) <br>
-- [BENCHMARK.md](BENCHMARK.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Validation reports] <br>
+**Output Type(s):** [Shell commands, Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- claude-code <br>
-- codex <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (1 positive skill-activation case, 2 attempts per task, 50% pass threshold). <br>
+Evaluated against 1 evaluation task (1 positive skill-activation case) in k8s-sandbox environment with external evaluator profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -53,21 +57,20 @@ Underlying evaluation signals used in this run: <br>
 - `accuracy`: Grades final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
 - `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
-- `token_efficiency`: Compares token usage with and without the skill. <br>
 
 
 
 ## Evaluation Results: <br>
-| Dimension | Num | `claude-code` | `codex` |
+| Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 82% (+9%) | 71% (+12%) |
-| Discoverability | 2 | 85% (+15%) | 50% (-12%) |
-| Effectiveness | 2 | 79% (+33%) | 55% (+24%) |
-| Efficiency | 2 | 73% (+22%) | 36% (-15%) |
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+100%) | 80% (+80%) |
+| Discoverability | 1 | 100% (+50%) | 94% (+50%) |
+| Effectiveness | 1 | 82% (+82%) | 38% (+38%) |
+| Efficiency | 1 | 94% (+54%) | 100% (+50%) |
 
 ## Skill Version(s): <br>
-1.0.0 (source: pyproject.toml) <br>
+1.0.1 (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

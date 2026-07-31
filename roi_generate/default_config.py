@@ -27,6 +27,7 @@ class TemplateBoxToMasksConfig:
     proposal_similarity_tol: float = 0.5
     max_proposal: int = 300
     nms_iou_threshold: float = 0.9
+    proposal_seed: int = 0
     # Template
     max_template: int = 3
     crop_resize: int = 224
@@ -137,6 +138,9 @@ def validate_sample_config(cfg):
 
     if not 0.0 <= tcfg.nms_iou_threshold <= 1.0:
         raise ValueError(f"proposal.nms_iou_threshold must be in [0,1], got {tcfg.nms_iou_threshold}")
+
+    if tcfg.proposal_seed < 0:
+        raise ValueError(f"proposal.proposal_seed must be a non-negative integer, got {tcfg.proposal_seed}")
 
     # Template config
     if tcfg.max_template <= 0:

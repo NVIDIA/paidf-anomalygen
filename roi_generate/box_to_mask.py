@@ -74,7 +74,18 @@ class BoxToMaskPostProcess:
         cv2.imwrite(output_path, binary_mask)
 
         image_path = ctx["input"]["image_path"]
-        item = {"image_path": image_path, "input_boxes": ctx["input"]["boxes"], "boxes": []}
+        proc_w, proc_h = ctx["input"]["image"].size
+        # input_boxes are in the processed (resized) space of
+        # processed_image_size; boxes are derived from the mask after it is
+        # resized back to original_image_size. The two size fields let
+        # consumers convert between the spaces.
+        item = {
+            "image_path": image_path,
+            "original_image_size": [ori_w, ori_h],
+            "processed_image_size": [proc_w, proc_h],
+            "input_boxes": ctx["input"]["boxes"],
+            "boxes": [],
+        }
         labeled_mask = cv2.connectedComponentsWithStats((binary_mask > 0).astype(np.uint8), connectivity=8)
         num_labels, _, stats, _ = labeled_mask
         for i in range(1, num_labels):  # skip background label 0

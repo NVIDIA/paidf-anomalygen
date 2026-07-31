@@ -449,6 +449,11 @@ class AnomalyInpaintDataset(Dataset):
 
         with Image.open(mask_filename) as fp:
             mask = fp.convert("L")
+        # Binarize to 0/255 (threshold 127) so every downstream consumer gets a
+        # clean binary mask; warn if the source mask was not already binary.
+        if not np.all(np.isin(np.array(mask), (0, 255))):
+            log.warning(f"Mask {mask_filename} is not binary; binarizing at threshold 127.")
+        mask = mask.point(lambda p: 255 if p > 127 else 0)
 
         self._put_cached_pil_image(self._mask_cache, cache_key, mask)
         return mask.copy()

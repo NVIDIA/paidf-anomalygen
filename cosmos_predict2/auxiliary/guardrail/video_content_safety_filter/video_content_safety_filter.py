@@ -122,7 +122,13 @@ class VideoContentSafetyFilter(ContentSafetyGuardrail):
                     break
 
             except Exception as e:
-                log.warning(f"Warning: Failed to run safety classifier on frame_number {frame_number}. Exception: {e}")
+                # NOTE: this is a fail-OPEN path — the frame is skipped and `is_safe`
+                # stays True, so a classifier error reports the content as safe. Log
+                # at error (not warning) so a silent breakage (e.g. an encoder API
+                # change) is visible instead of masquerading as "all safe".
+                # TODO(follow-up): add a fail-closed option for the image guardrail.
+                log.error(f"Failed to run safety classifier on frame_number {frame_number}; "
+                          f"treating frame as SAFE (fail-open). Exception: {e}")
                 continue
 
         # Prepare data for JSON
@@ -157,7 +163,13 @@ class VideoContentSafetyFilter(ContentSafetyGuardrail):
                     break
 
             except Exception as e:
-                log.warning(f"Warning: Failed to run safety classifier on frame_number {frame_number}. Exception: {e}")
+                # NOTE: this is a fail-OPEN path — the frame is skipped and `is_safe`
+                # stays True, so a classifier error reports the content as safe. Log
+                # at error (not warning) so a silent breakage (e.g. an encoder API
+                # change) is visible instead of masquerading as "all safe".
+                # TODO(follow-up): add a fail-closed option for the image guardrail.
+                log.error(f"Failed to run safety classifier on frame_number {frame_number}; "
+                          f"treating frame as SAFE (fail-open). Exception: {e}")
                 continue
 
         video_data = {

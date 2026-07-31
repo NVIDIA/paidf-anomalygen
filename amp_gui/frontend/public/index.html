@@ -555,6 +555,26 @@
         const { useState, useEffect, useRef } = React;
         const API_BASE = '/api';
 
+        // Stable per-browser session id so the backend isolates our state from
+        // other browsers/tabs hitting the same server. Persisted in localStorage
+        // (shared across this browser's tabs, survives reloads); if localStorage
+        // is unavailable (blocked storage / strict privacy mode), fall back to an
+        // in-memory id so the app still mounts.
+        const _newSid = () => (window.crypto && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+        let _ampSid;
+        try {
+            _ampSid = localStorage.getItem('amp_sid');
+            if (!_ampSid) {
+                _ampSid = _newSid();
+                localStorage.setItem('amp_sid', _ampSid);
+            }
+        } catch (e) {
+            _ampSid = _newSid();
+        }
+        axios.defaults.headers.common['X-AMP-Session'] = _ampSid;
+
         function App() {
             const [activeTab, setActiveTab] = useState(0);
             const [inputImage, setInputImage] = useState(null);

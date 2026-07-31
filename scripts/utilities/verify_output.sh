@@ -30,7 +30,22 @@ fi
 input_jsonl="$1"
 output_dir="$2"
 
-expected=$(grep -c '[^[:space:]]' "$input_jsonl")
+if [[ ! -f "$input_jsonl" ]]; then
+    echo "error: input JSONL not found: $input_jsonl" >&2
+    exit 1
+fi
+# `|| true`: grep -c exits 1 on zero matches, which would silently kill the
+# script under `set -e` before any diagnostic prints.
+expected=$(grep -c '[^[:space:]]' "$input_jsonl" || true)
+if [[ -z "$expected" ]]; then
+    # grep exit 2 (e.g. unreadable file) prints nothing to stdout.
+    echo "error: cannot read $input_jsonl" >&2
+    exit 1
+fi
+if (( expected == 0 )); then
+    echo "error: $input_jsonl contains no non-empty lines — nothing to verify" >&2
+    exit 1
+fi
 csv="$output_dir/SDG_result.csv"
 
 if [[ ! -f "$csv" ]]; then

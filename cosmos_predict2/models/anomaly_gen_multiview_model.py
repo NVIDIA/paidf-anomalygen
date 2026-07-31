@@ -24,6 +24,7 @@ import numpy as np
 from PIL import Image
 import csv
 import gc
+from concurrent.futures import ThreadPoolExecutor
 
 import attrs
 import torch
@@ -80,6 +81,14 @@ class Predict2AnomalyGenMultiViewModelConfig:
     fsdp_shard_size: int = 0
     high_sigma_ratio: float = 0.0
 
+    # Use CUDA graphs for DiT blocks during training
+    use_cuda_graphs_for_dit: bool = False
+    # torch.compile frozen encoders — per-encoder control
+    # (inherited on_train_start from Predict2AnomalyGenModel reads these)
+    compile_vae_encoder: bool = False
+    compile_text_encoder: bool = False
+    compile_mask_encoder: bool = False
+
     # Config for anomaly gen
     ag_config: LazyDict = None
 
@@ -130,15 +139,35 @@ class Predict2AnomalyGenMultiViewModel(Predict2AnomalyGenModel):
         else:
             self.data_parallel_size = 1
         
-        # New way to init pipe - Use Multi-View Pipeline instead of Single-View Pipeline
+        # New way to init pipe - Use Multi-View Pipeline instead of Single-View Pipeline.
+        # Pass the ag_config's text encoder (t5_model_name, e.g. t5-large) so the
+        # pipeline loads it directly instead of eagerly loading the ~45 GB t5-11b
+        # default at from_config and discarding it in from_anomaly_gen_config (matters
+        # on fresh / air-gapped installs where t5-11b isn't downloaded).
+        t5_model_name = getattr(config.ag_config, "t5_model_name", None)
+        from_config_kwargs = (
+            {"text_encoder_path": t5_model_name} if t5_model_name is not None else {}
+        )
         self.pipe = AnomalyGenMultiViewPipeline.from_config(
             config.pipe_config,
             dit_path=config.model_manager_config.dit_path,
+            **from_config_kwargs,
         )
         # Load anomaly gen components from config
         self.pipe.from_anomaly_gen_config(config.ag_config)
         self.freeze_parameters()
-        
+
+        if config.use_cuda_graphs_for_dit:
+            self.pipe.dit.disable_selective_checkpoint()
+            log.info("Disabled SAC on DiT for CUDA graph compatibility")
+
+        if config.use_cuda_graphs_for_dit and config.fsdp_shard_size != 0:
+            raise RuntimeError(
+                "CUDA graphs for DiT (use_cuda_graphs_for_dit=True) is incompatible with FSDP "
+                "(fsdp_shard_size != 0). Use DDP (fsdp_shard_size=0) for multi-view training "
+                "with CUDA graphs."
+            )
+
         # Don't train the denoising model (same as parent but without LoRA support for now)
         total_params = sum(p.numel() for p in self.parameters())
         frozen_params = sum(p.numel() for p in self.parameters() if not p.requires_grad)
@@ -489,12 +518,13 @@ class Predict2AnomalyGenMultiViewModel(Predict2AnomalyGenModel):
             log_kpi_table_per_view(valid_kpi, num_views)
 
             log.info(f"Start saving validation results to {save_dir}")
-            # Save all collected images
-            for anomaly_name, images_dict in filtered_generated_images_dict_list.items():
-                _dump_images(images_dict, save_dir, anomaly_name)
+            # Save all collected images — threaded because PNG encode + disk I/O dominates here.
+            with ThreadPoolExecutor(max_workers=16) as pool:
+                for anomaly_name, images_dict in filtered_generated_images_dict_list.items():
+                    _dump_images(images_dict, save_dir, anomaly_name, pool)
 
-            for anomaly_name, images_dict in real_images_dict.items():
-                _dump_images(images_dict, save_dir, f"real_{anomaly_name}")
+                for anomaly_name, images_dict in real_images_dict.items():
+                    _dump_images(images_dict, save_dir, f"real_{anomaly_name}", pool)
             
             # Save kpi per view
             save_path = os.path.join(save_dir, f"valid_kpi.csv")

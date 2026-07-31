@@ -15,6 +15,7 @@
 
 """CAD mask parser: classify pixels by color, extract per-class connected components."""
 
+import ast
 import json
 import cv2
 import numpy as np
@@ -58,7 +59,15 @@ class CADParser:
         self.color_map = {}
         self.class_names = []
         for color_str, info in raw.items():
-            rgba = eval(color_str)
+            try:
+                rgba = ast.literal_eval(color_str)
+            except (ValueError, SyntaxError):
+                rgba = None
+            # Must be an (r, g, b[, a]) sequence; a valid-but-wrong-type literal
+            # (set/dict/scalar) would otherwise fail later at rgba[:3] with a
+            # cryptic TypeError instead of a clear message.
+            if not isinstance(rgba, (list, tuple)) or len(rgba) < 3:
+                raise ValueError(f"Invalid color key in label file: {color_str!r}")
             cls = info["class"]
             if cls in ("BACKGROUND", "UNLABELLED"):
                 continue

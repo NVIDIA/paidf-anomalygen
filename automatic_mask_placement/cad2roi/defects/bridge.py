@@ -187,7 +187,13 @@ def _try_bridge_roi(group_indices, groups, comp_mask, solder_mask,
 
     gap_strip = np.zeros((h, w), dtype=np.uint8)
     if fill_gap:
-        sorted_indices = sorted(group_indices, key=lambda k: groups[k].centroid)
+        # Chain the groups along their principal spatial axis (not lexicographic
+        # x,y ordering) so vertical/diagonal layouts connect in the right order.
+        gi = list(group_indices)
+        cents = np.array([groups[k].centroid for k in gi], dtype=np.float64)
+        d = cents - cents.mean(axis=0)
+        principal = np.linalg.svd(d, full_matrices=False)[2][0]
+        sorted_indices = [gi[i] for i in np.argsort(d @ principal)]
         for a, b in zip(sorted_indices[:-1], sorted_indices[1:]):
             gap_strip = _fill_gap_between(gap_strip, groups[a], groups[b], img_shape)
 

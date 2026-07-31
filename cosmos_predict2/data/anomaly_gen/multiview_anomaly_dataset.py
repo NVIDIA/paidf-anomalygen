@@ -24,7 +24,7 @@ import os
 import re
 import json
 import random
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, OrderedDict
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
@@ -417,6 +417,9 @@ class MultiViewAnomalyInpaintDataset(Dataset):
         log.info(f"Loading multi-view generation settings from JSONL file: {input_data_path}")
         with open(input_data_path, "r") as f:
             self.input_data = [json.loads(line) for line in f if line.strip()]
+        self._cache_max_items = 128
+        self._image_cache = OrderedDict()
+        self._mask_cache = OrderedDict()
 
         # Raise error if there are duplicated samples.
         input_data_string = [json.dumps(data, sort_keys=True) for data in self.input_data]
@@ -440,11 +443,62 @@ class MultiViewAnomalyInpaintDataset(Dataset):
         # Sort by the number of instances for more efficient iterative generation
         self.sort_by_instance_num()
 
+    def _get_cached_pil_image(self, cache, cache_key):
+        cached_image = cache.get(cache_key)
+        if cached_image is None:
+            return None
+        cache.move_to_end(cache_key)
+        return cached_image.copy()
+
+    def _put_cached_pil_image(self, cache, cache_key, image):
+        cache[cache_key] = image
+        cache.move_to_end(cache_key)
+        while len(cache) > self._cache_max_items:
+            cache.popitem(last=False)
+
+    def _load_cached_image(self, image_filename):
+        cached_image = self._get_cached_pil_image(self._image_cache, image_filename)
+        if cached_image is not None:
+            return cached_image
+
+        with Image.open(image_filename) as fp:
+            image = fp.convert("RGB")
+
+        self._put_cached_pil_image(self._image_cache, image_filename, image)
+        return image.copy()
+
+    def _load_cached_mask(self, mask_filename):
+        cache_key = (mask_filename, "L")
+        cached_mask = self._get_cached_pil_image(self._mask_cache, cache_key)
+        if cached_mask is not None:
+            return cached_mask
+
+        with Image.open(mask_filename) as fp:
+            mask = fp.convert("L")
+        # Binarize to 0/255 (threshold 127) so every downstream consumer gets a
+        # clean binary mask; warn if the source mask was not already binary.
+        if not np.all(np.isin(np.array(mask), (0, 255))):
+            log.warning(f"Mask {mask_filename} is not binary; binarizing at threshold 127.")
+        mask = mask.point(lambda p: 255 if p > 127 else 0)
+
+        self._put_cached_pil_image(self._mask_cache, cache_key, mask)
+        return mask.copy()
+
     def __len__(self):
         return len(self.input_data)
 
     def __getitem__(self, idx):
-        return self.input_data[idx % len(self.input_data)]
+        data = dict(self.input_data[idx % len(self.input_data)])
+        # Preload per-view images and (binarized) masks, mirroring the
+        # single-view AnomalyInpaintDataset.__getitem__ so every downstream
+        # consumer — including inference — receives clean binary masks.
+        images = [self._load_cached_image(f) for f in data["image_filenames"]]
+        masks = [self._load_cached_mask(f) for f in data["mask_filename"]]
+        data["loaded_image_array"] = [np.array(im, copy=True) for im in images]
+        data["loaded_image_mode"] = [im.mode for im in images]
+        data["loaded_mask_array"] = [np.array(m, copy=True) for m in masks]
+        data["loaded_mask_mode"] = [m.mode for m in masks]
+        return data
 
     def _collate_fn(self, batch):
         batched_output = {}
@@ -488,7 +542,7 @@ class MultiViewAnomalyInpaintDataset(Dataset):
             # Validate augmentation for all unique masks
             all_aug_success = True
             for mask_filename in mask_filenames_list:
-                mask = Image.open(mask_filename).convert("L")
+                mask = self._load_cached_mask(mask_filename)
                 aug_mask, aug_success = augment_binary_mask(mask, 
                                                            map(int, data["shift_values"].split(',')), 
                                                            data["rotation_angle"], 
@@ -521,7 +575,7 @@ class MultiViewAnomalyInpaintDataset(Dataset):
             # TODO(@maxhuang): May need to find all instances which are not overlapped by other instances.
             instances_per_view = []
             for view_idx, mask_filename in enumerate(mask_filenames_list):
-                mask = Image.open(mask_filename).convert("L")
+                mask = self._load_cached_mask(mask_filename)
                 # Re-apply augmentation if it was successful
                 if all_aug_success and data["morph_operation"] != 'none':
                     aug_mask, _ = augment_binary_mask(mask, 

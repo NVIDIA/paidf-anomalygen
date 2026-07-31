@@ -116,34 +116,57 @@ def collect_entries(zip_path: Path):
     """Return list of (zip_entry, defect_type_or_None, output_stem)."""
     entries = []
 
+    seen = set()  # (dtype, stem) already collected — dedup across splits
+
     with zipfile.ZipFile(zip_path) as zf:
         all_names = set(zf.namelist())
-        json_entries = [n for n in all_names if n.endswith("/_annotations.coco.json")]
+        json_entries = sorted(
+            n for n in all_names if n.endswith("/_annotations.coco.json"))
         if not json_entries:
             sys.exit("ERROR: no _annotations.coco.json found in zip.")
-        json_entry = json_entries[0]
-        split = json_entry.rsplit("/_annotations.coco.json", 1)[0]
-        print(f"Found split: {split}")
 
-        with zf.open(json_entry) as f:
-            coco = json.load(f)
+        # Scan every split, not just the first. A Roboflow export can carry the
+        # curated stems spread across train/valid/test; picking only json_entries[0]
+        # silently dropped stems living in another split.
+        for json_entry in json_entries:
+            split = json_entry.rsplit("/_annotations.coco.json", 1)[0]
+            print(f"Found split: {split}")
 
-        for img in coco["images"]:
-            fname = img["file_name"]
-            zip_entry = f"{split}/{fname}"
-            if zip_entry not in all_names:
-                print(f"WARNING: {zip_entry} not in zip, skipping.")
-                continue
+            with zf.open(json_entry) as f:
+                coco = json.load(f)
 
-            orig = original_name(fname)
-            dtype, stem = classify(orig)
+            for img in coco["images"]:
+                fname = img["file_name"]
+                zip_entry = f"{split}/{fname}"
+                if zip_entry not in all_names:
+                    print(f"WARNING: {zip_entry} not in zip, skipping.")
+                    continue
 
-            if dtype is not None and stem not in KEEP_ANOMALY.get(dtype, set()):
-                continue
+                orig = original_name(fname)
+                dtype, stem = classify(orig)
 
-            entries.append((zip_entry, dtype, stem))
+                if dtype is not None and stem not in KEEP_ANOMALY.get(dtype, set()):
+                    continue
 
-    return entries
+                # A stem can appear in more than one split; keep the first only.
+                if (dtype, stem) in seen:
+                    continue
+
+                entries.append((zip_entry, dtype, stem))
+                seen.add((dtype, stem))
+
+    # Completeness: every curated anomaly stem should have been found in some
+    # split. Report the shortfall to the caller (and warn) rather than aborting
+    # here, so --dry-run can still print the summary and show what is missing.
+    expected = {(dtype, stem)
+                for dtype, stems in KEEP_ANOMALY.items() for stem in stems}
+    missing = sorted(expected - seen)
+    if missing:
+        listing = ", ".join(f"{d}/{s}" for d, s in missing)
+        print(f"WARNING: {len(missing)} curated KEEP_ANOMALY stem(s) not found "
+              f"in any split: {listing}")
+
+    return entries, missing
 
 
 def print_summary(entries):
@@ -262,7 +285,11 @@ def main():
             sys.exit(f"ERROR: {zip_path} not found")
 
         print(f"Scanning {zip_path.name} ...")
-        entries = collect_entries(zip_path)
+        # collect_entries already warns (loudly) about any missing curated
+        # stems; we still extract whatever IS present rather than aborting, so
+        # a maintainer-edited export that drops one stem yields a usable
+        # partial dataset instead of nothing.
+        entries, _missing = collect_entries(zip_path)
         print_summary(entries)
 
         if not args.dry_run:

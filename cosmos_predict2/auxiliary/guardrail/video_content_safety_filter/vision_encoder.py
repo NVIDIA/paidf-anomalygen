@@ -40,5 +40,10 @@ class SigLIPEncoder(torch.nn.Module):
         with torch.no_grad():
             inputs = self.processor(images=input_img, return_tensors="pt").to(self.device, dtype=self.dtype)
             image_features = self.model.get_image_features(**inputs)
+            # transformers >= 5.x returns a BaseModelOutputWithPooling here instead
+            # of a tensor; the pooled image embedding is what the safety classifier
+            # was trained on. Fall back to .pooler_output for forward compatibility.
+            if not isinstance(image_features, torch.Tensor):
+                image_features = image_features.pooler_output
             image_features /= image_features.norm(dim=-1, keepdim=True)
         return image_features

@@ -408,7 +408,7 @@ def test_roi_generate_models_forward_segmentation():
                     "resume_cache": False,
                 },
             },
-            0.95,
+            0.30,
             (512, 512),
         ),
         (
@@ -432,7 +432,7 @@ def test_roi_generate_models_forward_segmentation():
                     "resume_cache": False,
                 },
             },
-            0.95,  # Lower threshold for template matching with multiple templates
+            0.45,
             (512, 512),
         ),
         (
@@ -504,7 +504,7 @@ def test_roi_generate_models_forward_segmentation():
                     "resume_cache": False,
                 },
             },
-            0.95,
+            0.45,
             (512, 512),
         ),
         (

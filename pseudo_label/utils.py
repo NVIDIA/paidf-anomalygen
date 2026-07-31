@@ -64,10 +64,15 @@ def visualize(
         mask = Image.fromarray((mask_array).astype(np.uint8), mode="RGBA")
         alpha_channel = mask.split()[-1]
         image.paste(mask, mask=alpha_channel)
-        # Bbox.
+        # Bbox (also fixes the label anchor below).
         if bbox is not None:
             x, y, w, h = bbox
             draw.rectangle([x, y, x + w, y + h], outline="red", width=2)
+        else:
+            # No bbox for this instance: anchor the label at the top-left instead
+            # of crashing (x/y are undefined on the first iteration) or silently
+            # reusing the previous instance's coordinates.
+            x, y = 0, 0
         # Class name.
         if class_name is not None:
             _, text_height = textsize(class_name, font=None)

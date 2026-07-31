@@ -1,24 +1,24 @@
 # Evaluation Report
 
-Evaluation of the `anomalygen-release` skill before publication through NVSkills-Eval.
+Evaluation of the `anomalygen-release` skill before publication through Skill Evaluator.
 
-This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
+This benchmark summarizes 3-Tier Evaluation from Skill Evaluator results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
 
 ## Evaluation Summary
 
 - Skill: `anomalygen-release`
-- Evaluation date: 2026-05-30
-- NVSkills-Eval profile: `external`
-- Environment: `local`
+- Evaluation date: 2026-07-22
+- Skill Evaluator profile: `external`
+- Environment: `k8s-sandbox`
 - Dataset: 1 evaluation tasks
-- Attempts per task: 2
+- Attempts per task: 1
 - Pass threshold: 50%
 - Overall verdict: PASS
 
 ## Agents Used
 
-- `claude-code`
-- `codex`
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`)
+- Codex (`openai/openai/gpt-5.5`)
 
 ## Metrics Used
 
@@ -38,7 +38,6 @@ Underlying evaluation signals used in this run:
 - `accuracy` (Accuracy): grades final-answer correctness against the reference answer.
 - `goal_accuracy` (Goal Accuracy): checks whether the overall user task completed successfully.
 - `behavior_check` (Behavior Check): verifies expected behavior steps, including safety expectations.
-- `token_efficiency` (Token Efficiency): compares token usage with and without the skill.
 
 ## Test Tasks
 
@@ -52,37 +51,29 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 
 ## Results
 
-| Dimension | Num | `claude-code` | `codex` |
+| Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 82% (+9%) | 71% (+12%) |
-| Discoverability | 2 | 85% (+15%) | 50% (-12%) |
-| Effectiveness | 2 | 79% (+33%) | 55% (+24%) |
-| Efficiency | 2 | 73% (+22%) | 36% (-15%) |
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+100%) | 80% (+80%) |
+| Discoverability | 1 | 100% (+50%) | 94% (+50%) |
+| Effectiveness | 1 | 82% (+82%) | 38% (+38%) |
+| Efficiency | 1 | 94% (+54%) | 100% (+50%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 
 ## Tier 1: Static Validation Summary
 
-Tier 1 validation passed with observations. NVSkills-Eval ran 9 checks and found 9 total findings.
+Tier 1 validation passed with observations. Skill Evaluator ran 1 checks and found 2 total findings.
 
 Top findings:
 
-- MEDIUM QUALITY/quality_correctness: No documented scripts in table format (`skills/anomalygen-release/SKILL.md`)
-- MEDIUM QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/anomalygen-release/SKILL.md`)
 - MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/anomalygen-release/SKILL.md`)
 - MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/anomalygen-release/SKILL.md`)
-- LOW QUALITY/quality_discoverability: Description very long (279 chars, recommend 50-150) (`skills/anomalygen-release/SKILL.md`)
 
 ## Tier 2: Deduplication Summary
 
-Tier 2 validation passed. NVSkills-Eval ran 2 checks and found 0 total findings.
-
-Notable observations:
-
-- Context Deduplication: Collected 4 file(s)
-- Inter-Skill Deduplication: Parsed skill 'anomalygen-release': 279 char description
+This tier was not run or did not produce findings in this report.
 
 ## Publication Recommendation
 
-The skill is suitable to proceed toward NVSkills-Eval publication based on this benchmark. Skill owners should keep this file with the skill and refresh it when the evaluation dataset, skill behavior, or target agents materially change.
+The skill is suitable to proceed toward Skill Evaluator publication based on this benchmark. Skill owners should keep this file with the skill and refresh it when the evaluation dataset, skill behavior, or target agents materially change.
