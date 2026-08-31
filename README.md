@@ -44,16 +44,12 @@ segmenters.
 7. **Pseudo-labeling** — turn the refined batch into a labeled dataset: a COCO instance dataset, a
    per-class classification layout, and optional captions.
 
-Zooming into Generation (SDG) — the path a single image takes at generation time, once the
-per-defect-type LoRA is trained:
-
-![PAIDF AnomalyGen generation](docs/assets/generation.jpg)
-
-Generation is conditioned on two things at once. The **text condition** turns a prompt into tokens
-for the VLM. The **vision condition** takes a clean image plus a target mask, replaces the masked
-region with noise, and encodes it into a source latent. The Diffusion model — frozen, with a small
-per-defect-type LoRA on top — denoises the target latent from both, and the VAE decoder turns it
-back into an image with the defect painted into the masked region.
+Zooming into Generation (SDG): once the per-defect-type LoRA is trained, generation is conditioned
+on two things at once. The **text condition** turns a prompt into tokens for the VLM. The **vision
+condition** takes a clean image plus a target mask, replaces the masked region with noise, and
+encodes it into a source latent. The Diffusion model — frozen, with a small per-defect-type LoRA on
+top — denoises the target latent from both, and the VAE decoder turns it back into an image with
+the defect painted into the masked region.
 
 ## Installation
 
