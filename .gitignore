@@ -1,3 +1,29 @@
+/checkpoints
+/credentials
+/datasets
+/outputs
+/results
+/tmp
+.cuda-name
+*.env
+
+# Default targets for docs/training.md Step 1 (data + VAE download) and
+# Step 2 (DCP conversion). Multi-GB; not for tracking.
+/examples/data/
+/examples/checkpoints/
+
+# Local training output (generated, large).
+training_output/
+
+# Release-tool metadata (regenerated on every release run).
+cosmos_training_meta/
+
+# Editor / OS noise.
+*.swp
+.DS_Store
+
+# ------------------------ BELOW IS AUTO-GENERATED FOR PYTHON REPOS ------------------------
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -45,6 +71,7 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+test_report.xml
 *.cover
 *.py,cover
 .hypothesis/
@@ -193,24 +220,3 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-
-checkpoints/
-output/
-/datasets/
-!datasets/README.md
-!datasets/UC3_dataset_download_instructions.pdf
-results/*
-!results/.gitkeep
-ag_inference/testcase_*
-plots/
-
-# SonarQube
-.sonar/
-
-# CI artifacts
-gl-sast-sonar-report.json
-coverage_report.xml
-
-# OSRB / legal scratch — keep curated artifacts only
-.reference/*
-!.reference/third_party_license_report.md

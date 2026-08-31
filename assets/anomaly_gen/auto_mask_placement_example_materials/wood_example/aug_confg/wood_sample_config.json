@@ -1,7 +1,0 @@
-{
-  "shift_probability": 0.6,
-  "shift_x_range": [-10, 10],
-  "morph_probability": 0.0,
-  "morph_operations": ["dilate", "erode", "open", "close"],
-  "kernel_size": 5
-}

@@ -1,5 +1,5 @@
 ## Description: <br>
-PAIDF AnomalyGen pipeline — fine-tune, generate synthetic anomaly images (SDG), evaluate quality (nn_score), and per-sample search. <br>
+Use when running the PAIDF AnomalyGen pipeline over a defect dataset — mask placement, fine-tuning, synthetic defect-image generation (SDG), evaluation, quality refinement, and pseudo-labeling — even when the user names only one stage. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -7,9 +7,9 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-CC-BY-4.0 AND Apache-2.0 <br>
+Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to fine-tune diffusion models and generate synthetic anomaly images for few-shot industrial defect detection scenarios. <br>
+Developers and engineers use this skill to run the PAIDF AnomalyGen synthetic-defect-generation pipeline — fine-tuning a Cosmos-based diffusion model on a few-shot defect dataset and generating realistic anomaly images for training downstream anomaly-detection models. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,21 +25,18 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Setup](references/setup.md) <br>
-- [Finetune](references/finetune.md) <br>
-- [Prep Testcase](references/prep-testcase.md) <br>
-- [SDG Inference](references/sdg-inference.md) <br>
-- [Inference](references/inference.md) <br>
-- [Eval](references/eval.md) <br>
-- [SDG Refine](references/sdg-refine.md) <br>
-- [Datasets](references/datasets.md) <br>
+- [Inputs Reference](references/inputs.md) <br>
+- [Fine-tuning Reference](references/fine-tuning.md) <br>
+- [Mask Placement Reference](references/mask-placement.md) <br>
+- [Quality Refinement Reference](references/quality-refinement.md) <br>
+- [Verification Reference](references/verification.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Files, Analysis] <br>
+**Output Type(s):** [Shell commands, Configuration instructions, Files] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [Generated synthetic anomaly images, CSV evaluation reports, and per-sample score logs] <br>
+**Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
 - Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
@@ -48,37 +45,38 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 internal evaluation tasks (all positive skill-activation cases). <br>
+Evaluated against 3 evaluation tasks (3 positive) using isolated sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks whether skill-assisted execution avoids unsafe behavior such as secret leakage, destructive commands, or unauthorized access. <br>
-- Correctness: Checks whether the agent follows the expected workflow and produces the correct final output. <br>
-- Discoverability: Checks whether the agent loads the skill when relevant and avoids using it when irrelevant. <br>
-- Effectiveness: Checks whether the agent performs measurably better with the skill than without it. <br>
-- Efficiency: Checks whether the agent uses fewer tokens and avoids redundant work. <br>
+- Security: Whether the skill is safe to use (unsafe operations, secret leakage, unauthorized access). <br>
+- Correctness: Whether the final answer is correct against the reference answer. <br>
+- Discoverability: Whether the right skill was loaded and executed when needed. <br>
+- Effectiveness: Whether the skill helped complete the user’s goal and expected workflow. <br>
+- Efficiency: Whether the skill avoided wasted tool or skill usage. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- `skill_execution`: Verifies that the agent loaded the expected skill and workflow. <br>
-- `skill_efficiency`: Checks routing quality, decoy avoidance, and redundant tool usage. <br>
-- `accuracy`: Grades final-answer correctness against the reference answer. <br>
-- `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
-- `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
+- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Whether the expected skill was found and executed. <br>
+- `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Whether the user’s goal was achieved. <br>
+- `behavior_check`: Whether the expected workflow behavior was followed. <br>
 
 
 
 ## Evaluation Results: <br>
-| Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
-|---|---:|---:|---:|
-| Security | 3 | 100% (+0%) | 100% (+0%) |
-| Correctness | 3 | 80% (+80%) | 67% (+67%) |
-| Discoverability | 3 | 94% (+44%) | 73% (+31%) |
-| Effectiveness | 3 | 30% (+27%) | 34% (+31%) |
-| Efficiency | 3 | 93% (+51%) | 94% (+54%) |
+| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
+|---|---:|---:|
+| Overall | 42% → 72% (+30 points) | 39% → 81% (+42 points) |
+| Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
+| Correctness | 7% → 53% (+47 points) | 0% → 80% (+80 points) |
+| Discoverability | 49% → 98% (+49 points) | 40% → 88% (+48 points) |
+| Effectiveness | 9% → 22% (+12 points) | 9% → 38% (+28 points) |
+| Efficiency | 46% → 88% (+43 points) | 46% → 100% (+54 points) |
 
 ## Skill Version(s): <br>
-1.0.1 (source: pyproject.toml) <br>
+1.1.0 (source: frontmatter, pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

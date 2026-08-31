@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# ``anomalygen_texture_ft`` — I2I anomaly-inpainting training recipe (pcb dataset).
+#
+# Built from ``exp_texture_ft_phone_screen.yaml`` — see that file for what each key does and which
+# defaults are deliberately overridden. Only the dataset block differs.
+#
+# ``prepare_pcb_defect`` produces this dataset. It spans TWO textures: ``bridge`` belongs to ``IC``
+# and ``excess_solder`` / ``missing`` to ``passive_component``, so the pairs below are not a cross
+# product — each one must have a matching ``{dataset_path}/{texture}/anomaly_image/{defect}/``.
+#
+# All three defects are ``spatial_dependency: cad``, so mask placement additionally needs
+# ``datasets/pcb/{texture}/cad_mask/<clean_stem>.png`` and
+# ``datasets/pcb/semantic_segmentation_labels.json``; the prepare script ships both.
+
+task_type: texture_ft
+experiment: anomalygen_texture_ft
+job_name: anomalygen_texture_ft
+
+# --- dataset (required) -----------------------------------------------------------------------
+dataset_name: pcb
+anomaly_types: [[IC, bridge], [passive_component, excess_solder], [passive_component, missing]]
+dataset_path: datasets/pcb
+testcase_jsonl: datasets/validation_pcb/testcase.jsonl
+
+# --- model size (Cosmos3 backbone selection) --------------------------------------------------
+model_size: nano   # nano (Qwen3-VL-8B, recommended default) | edge (Nemotron-3 Dense VL 2B, experimental)
+
+# --- per-defect-type LoRA (adjust the rank and alpha for LoRA capacity; default to 8) ---------
+per_class_lora_rank: 8
+per_class_lora_alpha: 8
+
+# --- schedule / trainer -----------------------------------------------------------------------
+max_iter: 15000
+validation_iter: 1000
+run_validation_on_start: true   # run one validation pass at iter 0, before training
+save_iter: 1000
+cycle_lengths: 15000
+warm_up_steps: 500
+logging_iter: 10
+seed: 42
+
+# --- optimizer (AdamW) ------------------------------------------------------------------------
+lr: 0.001
+betas: [0.9, 0.95]
+eps: 1.0e-06
+weight_decay: 0.0
+
+# --- data -------------------------------------------------------------------------------------
+image_size: [512, 512]
+batch_size: 4             # samples packed per training step
+num_workers: 4
+ratio_range: [1.5, 8.0]   # anomaly crop area ratio range
+
+# --- validation generation --------------------------------------------------------------------
+model_input_size: 512
+shift: 5.0
+validation_batch_size: 16
+
+# --- early stopping ---------------------------------------------------------------------------
+early_stop_enabled: false
+early_stop_metric: nn          # nn | mnn | fid | aq_nn | completeness | precision | boundary_iou
+                               # fid is lower-better; every other metric is higher-better
+early_stop_patience: 5
+early_stop_min_delta: 0.0
+early_stop_min_delta_mode: rel  # rel | abs
