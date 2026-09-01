@@ -1,181 +1,211 @@
-# AnomalyGen Docker Image
+# Docker
 
-Docker build for **PAIDF AnomalyGen**. The default image targets **CUDA 12.8**
-(Blackwell-class GPUs, e.g. RTX PRO 6000); an **arm64 / CUDA 13** variant for
-the GB10/GB200/GB300 line is also provided.
+Container build for **PAIDF AnomalyGen**. Reproduces `scripts/env_setup.sh`
+(py3.13, torch 2.12.1+cu132, CUDA 13.2) in an image.
 
-| Variant | Dockerfile | Base image | Python deps |
-| --- | --- | --- | --- |
-| CUDA 12.8 (x86_64) | [`Dockerfile`](Dockerfile) | `nvidia/cuda:12.8.2-devel-ubuntu24.04` | [`requirements-conda-cuda128.txt`](../requirements-conda-cuda128.txt) |
-| CUDA 13 (arm64) | [`Dockerfile.arm.cuda130`](Dockerfile.arm.cuda130) | `nvidia/cuda:13.0.3-devel-ubuntu24.04` | [`requirements-conda-cuda130.txt`](../requirements-conda-cuda130.txt) |
+> **You may not need to build at all** — *if* this repo's `VERSION` is already published on
+> [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-anomalygen). Pulling needs
+> no registry login:
+>
+> ```shell
+> docker pull nvcr.io/nvidia/paidf-anomalygen:1.1.0
+> ```
+>
+> If that tag is not on the
+> [tag list](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-anomalygen/tags) yet,
+> build from this checkout — an older tag was built from a different source revision and will
+> not match this tree. Also build when you want a modified image, a target NGC does not
+> publish, or an air-gapped bundle. **A source build takes > 1 h.**
 
-Both Dockerfiles also expose **air-gapped** targets (`airgapped-product` /
-`airgapped-develop`) that bake `checkpoints/` into the image — see
-[Air-gapped variant](#air-gapped-variant-checkpoints-baked-in).
+| File              | Purpose                                                       |
+| ----------------- | ------------------------------------------------------------- |
+| `Dockerfile`      | Two-stage image build (compile → slim runtime).               |
+| `build_wheels.sh` | The compile recipe stage 1 runs; also runnable standalone.    |
 
-## Prerequisites
+The compile-heavy dependencies are **flash-attn, transformer-engine, apex,
+flash-attn-3-nv, natten**, and an **FFmpeg-free opencv-python-headless**.
+Compiling them from source is what makes the build take > 1 h.
 
-- Docker Engine (any reasonably recent version).
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-  for `--gpus` support.
-- Host driver compatible with CUDA 12.8 (R555+).
-- ~40 GB free disk for the image build (PyTorch + CUDA + flash-attn + apex +
-  transformer-engine). The final `develop` image is ~16 GB.
+## 1. `Dockerfile` — build the image
 
-## Targets
+**Stage 1 `wheelbuilder`** (`...-cudnn-devel`): compiles the heavy wheels by running
+`docker/build_wheels.sh --in-container`, so the pins live in one file and a standalone
+`build_wheels.sh` run produces the same wheels the image gets.
 
-Both Dockerfiles are multi-stage, sharing the same `base` build, and each
-exposes the same four targets:
+**Stage 2 `runtime`** (`...-base`, no compiler): creates the py3.13 venv and
+installs the heavy wheels from stage 1, the pip requirements, cosmos-framework
+(pinned in `requirements-nodeps.txt`), and the in-repo packages, as a non-root
+`nvidia` user.
 
-- **`develop`** — writable runtime, non-root `anomalygen` user,
-  `ANOMALYGEN_PRODUCT_MODE` unset. For code iteration with the agent. **This is
-  the default target** (last stage), so a plain `docker build` (no `--target`)
-  builds it.
-- **`product`** — production code locked read-only, non-root `anomalygen` user,
-  `ANOMALYGEN_PRODUCT_MODE=1`. For runtime delivery. Build with `--target product`.
-- **`airgapped-develop`** / **`airgapped-product`** — same as `develop` /
-  `product`, plus `checkpoints/` baked into the image so the container runs with
-  no network and no volume mounts. See [Air-gapped variant](#air-gapped-variant-checkpoints-baked-in).
+**Targets** (`--target`, default `develop`):
 
-## Build context
+- `develop` — non-root interactive image + dev/test tooling (`pytest`, `ruff`,
+  `pre-commit`); the default.
+- `product` — non-root image + app code locked read-only + `ANOMALYGEN_PRODUCT_MODE=1`,
+  **no dev tooling**.
+- `airgapped-develop` / `airgapped-product` — the above with the model's
+  checkpoints **baked in** for offline runs. Populate `./checkpoints` with
+  `scripts/download_checkpoints.sh` first, then supply it via a named `ckpts`
+  context (bypasses `.dockerignore`) with `buildx` (see below). These two also
+  bake a ~23 MB uv cache and unset `UV_NO_CACHE`, which the `edge` model size
+  needs — without it the framework's `uv run`-ed HF CLI reaches for a package
+  index on every checkpoint resolve. See the `airgapped-base` stage in
+  `docker/Dockerfile` for the mechanism.
+  They also set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, so the baked,
+  revision-pinned checkpoints are the only thing a model can load: some framework
+  code calls `from_pretrained()` without a revision, and without these a cache
+  miss there would silently resolve a mutable branch over the network instead of
+  failing. `product` and `develop` keep network access — a `develop` user may
+  legitimately run `scripts/download_checkpoints.sh` inside the container — and
+  can opt in per run with `docker run -e HF_HUB_OFFLINE=1 ...`.
 
-The Dockerfile copies the repo with `COPY . /workspace/paidf-anomalygen`; the
-repo-root [`.dockerignore`](../.dockerignore) keeps the context small by
-excluding `checkpoints/`, `datasets/`, `results/`, `ag_inference/`, `.git`,
-build caches, and virtualenvs. Mount those dirs at runtime (see [Run](#run)).
-The air-gapped variant instead bakes `checkpoints/` into the image.
-
-## Build
-
-The build context must be the **repo root** (the Dockerfile copies
-`requirements-conda-cuda128.txt` from there).
-
-```shell
-# from the repo root — develop (default)
-docker build -f docker/Dockerfile -t paidf-anomalygen-dev:cuda12.8 .
-
-# product
-docker build --target product -f docker/Dockerfile -t paidf-anomalygen:cuda12.8 .
-```
-
-arm64 / CUDA 13 (build on an aarch64 host):
-
-```shell
-docker build -f docker/Dockerfile.arm.cuda130 -t paidf-anomalygen-dev:cuda13-arm .
-docker build --target product -f docker/Dockerfile.arm.cuda130 -t paidf-anomalygen:cuda13-arm .
-```
-
-The [`anomalygen-release`](../skills/anomalygen-release/SKILL.md) skill
-wraps both targets with permission validation and is the recommended path for
-release builds.
-
-The build takes ~60-120 minutes on a fast machine; the `flash-attn`,
-`transformer-engine`, and `apex` steps each compile CUDA extensions.
-
-## Run
+Shared setup (used by both build types below):
 
 ```shell
-LOCAL_PROJECT_DIR="$HOME/workspace/paidf-anomalygen"
+export TAG=cuda-13.2.1-develop-ubuntu24.04-amd64         # or -arm64
+export IMAGE=paidf-anomalygen:$TAG
 
-docker run --gpus all -it --rm \
-    --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-    -v "${LOCAL_PROJECT_DIR}/checkpoints:/workspace/paidf-anomalygen/checkpoints" \
-    -v "${LOCAL_PROJECT_DIR}/datasets:/workspace/paidf-anomalygen/datasets" \
-    -v "${LOCAL_PROJECT_DIR}/results:/workspace/paidf-anomalygen/results" \
-    paidf-anomalygen:cuda12.8 bash
+# Target platform + GPU arch list (see the table below). The commands forward the
+# arch list from the environment with a bare `--build-arg TORCH_CUDA_ARCH_LIST`.
+export PLATFORM=linux/amd64
+export TORCH_CUDA_ARCH_LIST='8.0 8.6 9.0 10.0 12.0'   # amd64; see table below
+# For an arm64 image instead:
+#   export PLATFORM=linux/arm64
+#   export TORCH_CUDA_ARCH_LIST='9.0 10.0 10.3 12.0'
 ```
 
-To iterate on code without rebuilding, build the `develop` target and
-bind-mount the whole repo over the baked-in copy:
+### `TORCH_CUDA_ARCH_LIST` per CPU arch
+
+These are the lists the published wheels are built with. The **GPU** arch list is
+independent of the **CPU** arch — the two differ only because of which machines exist.
+
+| CPU arch  | `TORCH_CUDA_ARCH_LIST`  | GPUs covered                                              |
+| --------- | ----------------------- | --------------------------------------------------------- |
+| **amd64** | `8.0 8.6 9.0 10.0 12.0` | A100 · A10/A40/RTX 30 · H100 · B100/B200 · RTX PRO/RTX 50 |
+| **arm64** | `9.0 10.0 10.3 12.0`    | GH200 · GB200 · GB300 · workstation Blackwell             |
+
+- **Gaps are deliberate, not omissions.** A cubin runs on any *higher minor* revision
+  of the same major, so `8.6` also covers Ada (`8.9`) and `10.0` covers `10.3`.
+- **arm64 lists no Ampere** — NVIDIA's Grace-based systems pair with Hopper and
+  Blackwell only — and lists `10.3` explicitly because GB300 is a Grace part.
+- **It is required, not optional.** `docker build` gets no GPU, and
+  `torch.cuda.get_arch_list()` returns `[]` without one, so nothing can be
+  autodetected. The Dockerfile therefore defaults it to the amd64 row rather than
+  leaving it empty, so a bare `docker build` works; override for arm64 or a
+  narrower set.
+
+### Standard image — `develop` / `product`
 
 ```shell
-docker run --gpus all -it --rm \
-    --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-    -v "${LOCAL_PROJECT_DIR}:/workspace/paidf-anomalygen" \
-    paidf-anomalygen-dev:cuda12.8 bash
+export TARGET=develop  # or: product
+docker build --platform "$PLATFORM" -f docker/Dockerfile --build-arg TORCH_CUDA_ARCH_LIST --target "$TARGET" -t "$IMAGE" .
 ```
 
-> Bind-mounting the whole repo over a `product` image cancels the read-only
-> filesystem policy. Use the `develop` image for whole-repo bind-mounts.
+### Air-gapped image — `airgapped-develop` / `airgapped-product`
 
-### Quick training / generation example
-
-Requires checkpoints and a dataset; see the project tutorial for downloads.
+Bakes the model's checkpoints in, so it needs `buildx` and a named `ckpts`
+context (which bypasses `.dockerignore`):
 
 ```shell
-export IMAGINAIRE_OUTPUT_ROOT=./results
-
-torchrun --nproc_per_node=1 --master_port=12341 -m scripts.anomaly_gen.ag_train \
-    --config=cosmos_predict2/configs/base/ag_config.py \
-    --ag_config=ag_configs/MeiweiPCB_NVDINOV2_2B_512.yaml \
-    -- experiment=predict2_anomaly_gen_fsdp_2b
-
-torchrun --nproc_per_node=1 -m scripts.anomaly_gen.synthetic_dataset_generation \
-    --config=cosmos_predict2/configs/base/ag_config.py \
-    --ag_checkpoint_dir=results/anomaly_gen/MeiweiPCB/MeiweiPCB_training_exp_FP32_lr0.02_bs=2_larger_guided_mask_maskconf=0.85_2B_512x512 \
-    --step=200 \
-    --input_data_path=ag_inference/example.jsonl \
-    --output_image_path=results/MeiweiPCB/example_output \
-    --seed=0 \
-    -- experiment=predict2_anomaly_gen_fsdp_2b
+export TARGET=airgapped-product  # or: airgapped-develop
+docker buildx build --platform "$PLATFORM" -f docker/Dockerfile --build-arg TORCH_CUDA_ARCH_LIST --build-context ckpts=./checkpoints --target "$TARGET" --load -t "$IMAGE" .
 ```
 
-## Push
+## 2. Publish (optional)
+
+To push to your own registry, tag the image for it and authenticate first:
 
 ```shell
-DOCKER_REPO="YOUR_REGISTRY/YOUR_NAMESPACE"
-DATE_TAG="cuda12.8_$(date +%Y%m%d)"
-
-docker tag paidf-anomalygen:cuda12.8 "${DOCKER_REPO}/paidf-anomalygen:${DATE_TAG}"
-docker push "${DOCKER_REPO}/paidf-anomalygen:${DATE_TAG}"
+export REGISTRY=<your-registry>
+docker tag "$IMAGE" "$REGISTRY/$IMAGE"
+docker login "$REGISTRY"
+docker push "$REGISTRY/$IMAGE"
 ```
 
-## Air-gapped variant (checkpoints baked in)
+## 3. Run
 
-The `airgapped-product` / `airgapped-develop` targets bake `./checkpoints/` into
-the image so the result runs with no network or volume mounts. Use this when
-delivering to environments that can't pull model weights at runtime. Both
-[`Dockerfile`](Dockerfile) and [`Dockerfile.arm.cuda130`](Dockerfile.arm.cuda130)
-support them — swap the `-f` argument below for the arm64 / CUDA-13 build.
+Use the image as a ready venv and bind-mount the repo over `/workspace/paidf-anomalygen`,
+so it runs the current code/config plus the `datasets/` and base `checkpoints/`.
+`--user` + the `/etc/passwd` mount keep outputs host-owned and let `getpass.getuser()`
+resolve; `--shm-size` feeds the dataloader workers.
 
-**Image size will be ~75 GB+** (whatever `du -sh ./checkpoints` reports, plus
-the ~10 GB framework base). Make sure your registry and host disk can handle it.
+Set `IMAGE` to whichever image you are using — the one built above, or a pulled
+`nvcr.io/nvidia/paidf-anomalygen:<tag>`.
 
-### Requirements
-
-- **buildx is required** — the `--build-context` flag is a buildx feature.
-  Modern Docker aliases `docker build` to buildx; use `docker buildx build`
-  explicitly to be safe.
-- Populated `./checkpoints` directory at the repo root (sam2, NVDINOV2,
-  facebook, google-t5/{t5-large,t5-11b}, nvidia/{C-RADIO-V3,Cosmos-Predict2-2B-Text2Image,Cosmos-Predict2-14B-Text2Image}, Qwen).
-  Refer to the project tutorial for download instructions.
-
-### Build the air-gapped image
+> **The whole-tree bind mount below is a `develop` workflow.** It mounts the host checkout
+> *over* `/workspace/paidf-anomalygen`, which is where the image's own application code lives —
+> so the code that runs is the host copy, and the `product` target's read-only application tree
+> is shadowed rather than enforced. That is the right trade for development, where running the
+> edited checkout is the whole point. If you chose `product` or `airgapped-product` *for* that
+> immutability, use the recipe in "Running a product image" below instead.
 
 ```shell
-# from the repo root
-docker buildx build --target airgapped-product \
-    --build-context ckpts=./checkpoints \
-    -f docker/Dockerfile \
-    -t paidf-anomalygen:cuda12.8-airgapped .
+DOCKER="docker run --rm --gpus all --shm-size=16g \
+  --user $(id -u):$(id -g) -e USER=$(id -un) -e HOME=/tmp -e HF_TOKEN \
+  -v $PWD:/workspace/paidf-anomalygen \
+  -w /workspace/paidf-anomalygen $IMAGE"
+
+# interactive shell
+$DOCKER -it bash
+
+# dry-run smoke test — reference recipe + hydra overrides (20 iters)
+$DOCKER bash -c '
+  IMAGINAIRE_OUTPUT_ROOT="$PWD/results/dryrun" \
+  torchrun --nproc_per_node=1 anomalygen/scripts/texture/train.py \
+    --config=cosmos_framework/configs/base/config.py \
+    --recipe=ag_config/exp_texture_ft_phone_screen.yaml \
+    -- experiment=anomalygen_texture_ft \
+       trainer.max_iter=20 trainer.validation_iter=10 checkpoint.save_iter=10'
 ```
 
-### Run the air-gapped image
+- **Overrides** go after `--` (hydra). Drop the `trainer.*`/`checkpoint.*` overrides
+  for a full fine-tune (schedule then comes from the recipe).
+- Point `IMAGINAIRE_OUTPUT_ROOT` at a **fresh** dir — the trainer *resumes* from any
+  checkpoint already present in the output dir.
 
-No volume mounts needed — checkpoints live inside the image:
+### Running a product image
+
+The `product` and `airgapped-product` targets own their application code: it is `chown root` and
+`chmod a-w`, so nothing inside the container can modify what runs. Keeping that property means
+mounting **data, not the tree** — bind-mount only the directories the pipeline reads and writes,
+and let the code come from the image:
 
 ```shell
-docker run --gpus all -it --rm \
-    --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-    paidf-anomalygen:cuda12.8-airgapped bash
+DOCKER_PRODUCT="docker run --rm --gpus all --shm-size=16g \
+  --user $(id -u):$(id -g) -e USER=$(id -un) -e HOME=/tmp -e HF_TOKEN \
+  -v $PWD/datasets:/workspace/paidf-anomalygen/datasets:ro \
+  -v $PWD/checkpoints:/workspace/paidf-anomalygen/checkpoints:ro \
+  -v $PWD/results:/workspace/paidf-anomalygen/results \
+  -v $PWD/ag_config:/workspace/paidf-anomalygen/ag_config:ro \
+  -w /workspace/paidf-anomalygen $IMAGE"
+
+# Verify the property actually holds — this must fail:
+$DOCKER_PRODUCT sh -c 'touch anomalygen/__init__.py' && echo "UNEXPECTED: app code is writable"
 ```
+
+Notes:
+
+- `checkpoints/` is mounted `:ro` so the weights the manifest gate verified cannot be swapped by a
+  later step in the same run. Drop `:ro` only if you intend to run `download_checkpoints.sh`
+  inside the container.
+- `results/` is the one writable mount — it is where the run's outputs belong.
+- `ag_config/` is mounted read-only so a recipe can be supplied without making the code tree
+  writable. Omit it to use only the recipes baked into the image.
+- The air-gapped targets additionally set `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`, so a
+  cache miss fails loudly instead of silently resolving a mutable branch over the network.
 
 ## Troubleshooting
 
-- **`flash-attn` / `transformer-engine` / `apex` build OOMs** — lower
-  `--build-arg MAX_JOBS=...`, or supply `GITLAB_PYPI_INDEX_URL` to skip the
-  compiles entirely.
+- **Build looks stuck for an hour** — that is stage 1 compiling flash-attn /
+  transformer-engine / apex from source, which is expected. Watch the layer output
+  rather than killing it.
+- **`flash-attn` / `transformer-engine` / `apex` build OOMs** — lower the job
+  count (`--build-arg MAX_JOBS=...`, default 16).
 - **Driver / CUDA mismatch** — the image needs a host driver supporting its
   CUDA version. Run `nvidia-smi` on the host to confirm.
-- **`failed to find stage "base"`** — the multi-stage build needs BuildKit.
-  Enable with `export DOCKER_BUILDKIT=1`, or use `docker buildx build`.
+- **BuildKit required** — the Dockerfile uses BuildKit-only features (the
+  `# syntax` directive, `RUN <<EOF` heredocs, `--build-context`). Docker 23+ has
+  BuildKit on by default; on older Docker `export DOCKER_BUILDKIT=1`, or use
+  `docker buildx build`.
+- **`failed to find stage "..."`** — an unknown `--target` name. Valid targets:
+  `develop` (default), `product`, `airgapped-develop`, `airgapped-product`.

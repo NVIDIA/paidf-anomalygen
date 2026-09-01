@@ -1,54 +1,33 @@
-# Build and upload instructions:
-#   pip3 install --upgrade build twine
-#   python3 -m build
-#   python3 -m twine upload dist/*
-
-
-[build-system]
-requires = ["setuptools", "setuptools-scm"]
-build-backend = "setuptools.build_meta"
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 [project]
-name = "nvidia-cosmos"
-version = "1.0.1"
-authors = [
-    {name = "NVIDIA Corporation"},
-]
-description = "Cosmos World Foundation Model"
-readme = "README.md"
-requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
-dynamic = ["dependencies"]
+name = "paidf-anomalygen"
+version = "1.1.0"
+description = "Physical AI Data Factory (PAIDF) AnomalyGen: a pipeline for generating synthetic defect data by fine-tuning Cosmos3 into anomaly-inpainting models (mask placement, fine-tuning, SDG, evaluation, quality refinement, pseudo-labeling)"
+requires-python = ">=3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "NVIDIA Corporation" }]
 
-[project.urls]
-homepage = "https://github.com/nvidia-cosmos/cosmos-predict2/"
-issues = "https://github.com/nvidia-cosmos/cosmos-predict2/issues"
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
 
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -v: per-test result lines; -ra: summary with skip/xfail reasons; --durations: slowest tests.
+addopts = "-v -ra --durations=20"
 
-[tool.setuptools]
-packages = ["cosmos_predict2"]
-
-[tool.isort]
-profile = "black"
-known_third_party = ["third_party"]
-skip = ["third_party"]
-line_length = 120
-
-[tool.black]
-line-length = 120
-target_version = ['py310']
-exclude = 'third_party'
+[tool.coverage.run]
+source = ["anomalygen"]
+# scripts/ are thin CLI entrypoints (argparse + orchestration), exercised via their imported
+# library functions rather than unit-tested directly.
+omit = ["*/tests/*", "*/scripts/*"]
 
 [tool.coverage.report]
-include_namespace_packages = true
-skip_empty = true
-omit = [
-    "tests/*",
-    "legacy/*",
-    ".venv/*",
-    "**/test_*.py",
-    "config.py",
-    "config-3.10.py"
-]
+skip_covered = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+# ag_config holds the experiment recipes (repo-root, editable sample files).
+include = ["anomalygen*", "ag_config*"]

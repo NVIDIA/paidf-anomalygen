@@ -1,14 +1,58 @@
-logs/
-tmp/
 # Keep the build context small: the Dockerfile does `COPY . /workspace/...`,
-# so anything not excluded here ends up baked into the image.
+# so anything not excluded here is sent to the daemon and baked into the image.
 
-# VCS
+# Credentials and key material.
+#
+# This block mirrors the credential entries in .gitignore, and has to exist separately from them:
+# .gitignore keeps these OUT OF GIT, which is exactly why they are present as untracked files in a
+# working tree — and `COPY . /workspace/paidf-anomalygen` below sends the whole context, so without
+# these patterns a developer's .env is baked into a layer of an image published to a registry.
+# A credential in a published layer is disclosed to everyone who pulls it and survives deletion in
+# a later layer, so it must never enter the context in the first place.
+#
+# Keep in step with .gitignore's credential entries.
+.env
+*.env
+.env.*
+/credentials
+.netrc
+.npmrc
+.pypirc
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.ssh/
+.aws/
+.azure/
+.gcloud/
+.config/gcloud/
+.kube/
+kubeconfig
+*.kubeconfig
+.huggingface/
+*.tfstate
+*.tfstate.*
+
+# VCS / CI
 .git
 .gitattributes
 .gitignore
 .gitlab-ci.yml
-.sonar
+.github
+
+# Virtualenvs (multi-GB — the image builds its own /opt/venv)
+.venv
+.venv-cpu
+env/
+venv/
+ENV/
 
 # Large data / artifacts (mount these at runtime instead)
 checkpoints/
@@ -16,7 +60,16 @@ datasets/
 results/
 output/
 plots/
-ag_inference/testcase_*
+wheels/
+
+# Repo test suite (not needed at runtime)
+/tests/
+
+# Loose archives / dumps that live in the repo root
+*.zip
+*.tar
+*.tar.gz
+*.7z
 
 # Python bytecode / build artifacts
 __pycache__/
@@ -30,17 +83,8 @@ build/
 dist/
 develop-eggs/
 .eggs/
-wheels/
 share/python-wheels/
 pip-log.txt
-pip-delete-this-directory.txt
-
-# Virtualenvs
-.env
-.venv
-env/
-venv/
-ENV/
 
 # Test / coverage / type-check caches
 .pytest_cache/
@@ -69,3 +113,5 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
+tmp/

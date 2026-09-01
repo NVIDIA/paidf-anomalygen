@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# ``anomalygen_texture_ft`` — I2I anomaly-inpainting training recipe (EXAMPLE, phone_screen dataset).
+#
+# This is the EXAMPLE recipe, wired for the phone_screen dataset (Phone oil/scratch/stain), and doubles
+# as the template for a new dataset. Copy it and edit EVERY key in the dataset block —
+# ``dataset_name``, ``anomaly_types``, ``dataset_path``, ``testcase_jsonl``. They hold real phone_screen
+# values, not placeholders, so one left behind points training at the wrong data rather than erroring
+# out. Each ``[texture, defect]`` pair needs a matching ``{dataset_path}/{texture}/{defect}/`` directory.
+#
+# Every key below the dataset block is OPTIONAL: deleting one falls back to the builder default in
+# ``anomalygen/configs/texture/exp_config.py``, and every value here IS that default — this file is
+# the reference the builder is kept in sync with, so deleting a key preserves behaviour rather than
+# changing it.
+
+task_type: texture_ft
+experiment: anomalygen_texture_ft
+job_name: anomalygen_texture_ft
+
+# --- dataset (required) -----------------------------------------------------------------------
+dataset_name: phone_screen
+anomaly_types: [[Phone, oil], [Phone, scratch], [Phone, stain]]
+dataset_path: datasets/phone_screen
+testcase_jsonl: datasets/validation_phone_screen/testcase.jsonl
+
+# --- model size (Cosmos3 backbone selection) --------------------------------------------------
+model_size: nano   # nano (Qwen3-VL-8B, recommended default) | edge (Nemotron-3 Dense VL 2B, experimental)
+
+# --- per-defect-type LoRA (adjust the rank and alpha for LoRA capacity; default to 8) ---------
+per_class_lora_rank: 8
+per_class_lora_alpha: 8
+
+# --- schedule / trainer -----------------------------------------------------------------------
+max_iter: 15000
+validation_iter: 1000
+run_validation_on_start: true   # run one validation pass at iter 0, before training
+save_iter: 1000
+cycle_lengths: 15000
+warm_up_steps: 500
+logging_iter: 10
+seed: 42
+
+# --- optimizer (AdamW) ------------------------------------------------------------------------
+lr: 0.001
+betas: [0.9, 0.95]
+eps: 1.0e-06
+weight_decay: 0.0
+
+# --- data -------------------------------------------------------------------------------------
+image_size: [512, 512]
+batch_size: 4             # samples packed per training step
+num_workers: 4
+ratio_range: [1.5, 8.0]   # anomaly crop area ratio range
+
+# --- validation generation --------------------------------------------------------------------
+model_input_size: 512
+shift: 5.0
+validation_batch_size: 16
+
+# --- early stopping ---------------------------------------------------------------------------
+early_stop_enabled: false
+early_stop_metric: nn          # nn | mnn | fid | aq_nn | completeness | precision | boundary_iou
+                               # fid is lower-better; every other metric is higher-better
+early_stop_patience: 5
+early_stop_min_delta: 0.0
+early_stop_min_delta_mode: rel  # rel | abs

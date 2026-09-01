@@ -1,408 +1,200 @@
 ---
 name: anomalygen-release
 description: >-
-  Build and validate PAIDF AnomalyGen product and develop Docker containers
-  from docker/Dockerfile. Use when the user asks to build an anomalygen
-  product container, build an anomalygen develop container, validate container
-  runtime permissions, or produce release summaries.
+  Use when building the paidf-anomalygen Docker image (develop / product /
+  air-gapped) from docker/Dockerfile — build the chosen target from source and
+  run it. Not for training or synthetic defect-image generation (SDG).
 license: Apache-2.0
+compatibility: >-
+  Requires Docker 23+ (BuildKit) + nvidia-container-toolkit and a CUDA GPU. The
+  build compiles the heavy CUDA extensions from source and takes >1 h.
 metadata:
-  author: Wenny Lo <wennyl@nvidia.com>
-  tags: [release, docker, container, airgapped, paidf]
+  owner: NVIDIA
+  service: docker
+  version: 1.1.0
+  reviewed: '2026-08-06'
+  author: NVIDIA <nvidia@nvidia.com>
+  tags:
+      - physical-ai
+      - docker
+      - release
+      - air-gapped
+  languages: [shell]
+  frameworks: [docker]
 ---
 
-# AnomalyGen Release
+# Skill: anomalygen-release
 
-Use this skill to build and validate AnomalyGen CUDA 12.8 containers. This is a
-release/build workflow, not a training or inference workflow.
+## Purpose
 
-Run every command from the repo root.
+Build and run the **paidf-anomalygen** container. `docker/Dockerfile` reproduces
+`scripts/env_setup.sh` as a two-stage image (compile heavy wheels → slim non-root runtime).
+This is a **release/build** workflow — not training or inference
+(use the `anomalygen` skill for those). Build targets, GPU-arch lists, and troubleshooting
+detail live in `docker/README.md`. Run every command from the repo root.
 
-**Docker privilege.** All `docker` commands below assume your user is in
-the `docker` group (or the daemon is rootless). If your environment
-requires elevated privileges, prefix `sudo` to each `docker` invocation.
+> **Check whether a build is needed at all.** Prebuilt images are published on
+> [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-anomalygen):
+> `docker pull nvcr.io/nvidia/paidf-anomalygen:<tag>` needs no login and no compile.
+> Build only when the user wants a modified image, a target NGC does not publish, or an
+> air-gapped bundle. **A build from source takes >1 h** — say so before starting one.
 
-## Container Modes
+## When to Use This Skill
 
-There are two image modes:
+Use this skill when the user wants to build or ship the anomalygen container —
+build a **develop** / **product** / **air-gapped** image, push it to a registry, or
+run it. E.g. "build the anomalygen product container", "build an air-gapped develop
+image".
 
-- **Product container**: protected runtime for users operating AnomalyGen through
-  an agent. The image sets `ANOMALYGEN_PRODUCT_MODE=1`, runs as a non-root user,
-  locks production code read-only, and keeps runtime artifacts writable.
-- **Develop container**: writable development environment for developers using
-  an agent to edit code. The image leaves `ANOMALYGEN_PRODUCT_MODE` unset and
-  keeps production code paths writable.
+Do not use it to run training or SDG generation — that's the `anomalygen` skill.
 
-Each mode is available in two variants:
+## Prerequisites
 
-- **Standard**: checkpoints are mounted at runtime (thin image, ~10 GB).
-- **Air-gapped**: checkpoints are baked into the image (fat image, ~75 GB+).
-  Use when the target environment cannot reach the network at runtime.
+- **Docker 23+** (BuildKit on by default) + **nvidia-container-toolkit** + a CUDA GPU.
+- Enough headroom for the source compile: the heavy extensions are memory-hungry and the
+  build needs tens of GB of disk for intermediate layers.
+- The repo **`.venv`** (`scripts/env_setup.sh`: py3.13, torch 2.12.1+cu132) is **optional** —
+  it is used only to auto-derive `TORCH_CUDA_ARCH_LIST` below, via
+  `torch.cuda.get_arch_list()`. Without it the documented default is used.
+- **Air-gapped only:** the model checkpoints under `./checkpoints/`. `scripts/download_checkpoints.sh`
+  populates this directory.
 
-Builds should happen from a normal cloned repo or develop container where
-`ANOMALYGEN_PRODUCT_MODE` is unset. Do not build nested images from a product
-runtime container.
+## Targets
 
-User-facing prompts:
+`docker/Dockerfile` exposes four targets (`--target`, default `develop`):
 
-```text
-Build anomalygen product container
-Build anomalygen develop container
-Generate airgapped docker image
-Build airgapped product image
-Build airgapped develop image
+| Target              | What                                                                          |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `develop` (default) | non-root interactive image + dev tooling (`pytest`, `ruff`, `pre-commit`)     |
+| `product`           | non-root, app code **read-only**, `ANOMALYGEN_PRODUCT_MODE=1`, no dev tooling |
+| `airgapped-develop` | `develop` + the checkpoints **baked in** for offline runs                     |
+| `airgapped-product` | `product` + the checkpoints **baked in** for offline runs                     |
+
+## Instructions
+
+**Default flow: Step 1, then stop with the built image.** Push (Step 2) and run
+(Step 3) are opt-in — only do them when the user explicitly asks to publish or run the image.
+
+Set the shared variables once (arm64 host → use the commented values):
+
+```shell
+export TARGET=develop                       # develop | product | airgapped-develop | airgapped-product
+export IMAGE=paidf-anomalygen:cuda-13.2.1-${TARGET}-ubuntu24.04-amd64
+# tag = <base-cuda>-<target>-<ubuntu>-<arch>; arm64 host → …-arm64. Set TARGET *first*: it feeds both
+# the tag and --target below, so they cannot disagree. Hardcoding "develop" here and then building
+# --target product silently ships a product image labelled develop.
+export PLATFORM=linux/amd64                 # arm64 host: linux/arm64
+# GPU arch (>=8.0), derived from .venv torch when present; forwarded to the build as a --build-arg.
+# The `:-` matters: get_arch_list() is [] with no GPU (and the command fails outright with no .venv),
+# and a bare --build-arg forwards that empty value, overriding the Dockerfile default.
+export TORCH_CUDA_ARCH_LIST="$(.venv/bin/python -c "import torch; print(' '.join(c for c in sorted({f'{a[3:-1]}.{a[-1]}' for a in torch.cuda.get_arch_list() if a.startswith('sm_')}, key=float) if float(c) >= 8.0))" 2>/dev/null)"
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0 8.6 9.0 10.0 12.0}"  # arm64: '9.0 10.0 10.3 12.0'
 ```
 
-## Target Architecture
+### Step 1 — build the image
 
-The repo ships two Dockerfiles, one per host architecture:
+Stage 1 compiles flash-attn / transformer-engine / apex / flash-attn-3-nv / natten from
+source. **This takes >1 h** — it is not a hang. `TORCH_CUDA_ARCH_LIST` is *required* on
+this path: `docker build` never sees a GPU, so nothing can be autodetected.
 
-| Architecture | Dockerfile | CUDA | GPUs |
-|---|---|---|---|
-| **x86_64** (default) | `docker/Dockerfile` | 12.8 | Blackwell-class, e.g. RTX PRO 6000 |
-| **arm64** | `docker/Dockerfile.arm.cuda130` | 13.0 | GB10 / GB200 / GB300 |
+**Standard** (`develop` / `product`):
 
-A Docker image is built for the **host's** architecture — this skill does not
-cross-build. **Auto-detect the host arch and confirm the matching Dockerfile
-with the user** before building (don't ask open-endedly — detect, then confirm):
-
-```bash
-uname -m   # x86_64 -> docker/Dockerfile ; aarch64/arm64 -> docker/Dockerfile.arm.cuda130
+```shell
+docker build --platform "$PLATFORM" -f docker/Dockerfile \
+    --build-arg TORCH_CUDA_ARCH_LIST \
+    --target "$TARGET" -t "$IMAGE" .        # TARGET from the shared vars; tag and target stay in sync
 ```
 
-State the detected choice and let the user confirm or override, e.g. *"Detected
-aarch64 → building with `docker/Dockerfile.arm.cuda130` (arm64 / CUDA 13).
-Proceed?"* If the user already named an architecture, skip the confirmation and
-use it. Only deviate from the host arch if the user explicitly asks.
+**Air-gapped** (`airgapped-develop` / `airgapped-product`) — needs `buildx` + a named
+`ckpts` context (which bypasses `.dockerignore`). The image is self-contained, so save it
+to `./results/` as a gzipped bundle for offline transfer and **report that path to the user**:
 
-Pass the chosen file via `--dockerfile` to `build_image.sh` /
-`build_airgapped_image.sh` (the x86 `docker/Dockerfile` is the default, so it
-can be omitted for x86). The scripts preflight the matching conda spec and
-requirements file (`cuda130` for arm, `cuda128` otherwise) automatically.
+```shell
+# --load is required: buildx's default driver keeps the result in its own build cache, so without it
+# the tag never reaches the local daemon and the `docker save` below fails with "reference does not
+# exist". (Single-platform builds only — --load cannot export a multi-arch manifest.)
+docker buildx build --platform "$PLATFORM" -f docker/Dockerfile \
+    --build-arg TORCH_CUDA_ARCH_LIST \
+    --build-context ckpts=./checkpoints \
+    --target "$TARGET" -t "$IMAGE" --load . # set TARGET=airgapped-develop|airgapped-product first
 
-For arm builds, give the image an arch-distinct `--tag` or `--image-name` (e.g.
-`--tag cuda13-arm-$(date -u +%Y%m%d)`) so it does not clobber the x86 image.
-
-## Scope
-
-Allowed:
-
-- Inspect `docker/Dockerfile` (all targets, including the airgapped ones)
-  and release inputs.
-- Build product or develop images (standard or air-gapped) with the helper scripts.
-- Auto-download missing checkpoints when building an air-gapped image.
-- Validate product image runtime guardrails.
-- Validate develop image writability for code development.
-- Report image tag, image id, mode, and validation results.
-
-Do not:
-
-- Run AnomalyGen training or SDG generation as part of release.
-- Bake secrets, private datasets, or user experiment outputs into the image.
-- Build images inside `ANOMALYGEN_PRODUCT_MODE=1`.
-- Use arbitrary Docker commands beyond the build and validation steps unless
-  the user explicitly asks.
-
-## Canonical Build Commands
-
-Product container:
-
-```bash
-bash skills/anomalygen-release/scripts/build_image.sh --mode product
+mkdir -p results
+BUNDLE="results/$(basename "$IMAGE" | tr ':' '_').tar.gz"
+docker save "$IMAGE" | gzip > "$BUNDLE"
+echo "air-gapped bundle: $BUNDLE"      # tell the user this location
 ```
 
-Equivalent Docker command:
+### Step 2 — push (only when the user asks to publish; skip by default)
 
-```bash
-DATE_TAG="$(date -u +%Y%m%d)"
-DOCKER_BUILDKIT=1 docker build \
-    --target product \
-    -f docker/Dockerfile \
-    -t "paidf-anomalygen:${DATE_TAG}" \
-    .
+Ask the user which registry to publish to — there is no default. Tag the local image for
+that registry, authenticate, then push:
+
+```shell
+export REGISTRY=<your-registry>          # e.g. registry.example.com or an org path
+docker tag "$IMAGE" "$REGISTRY/$IMAGE"
+docker login "$REGISTRY"                 # credentials per your registry; --password-stdin in CI
+docker push "$REGISTRY/$IMAGE"
 ```
 
-Develop container:
+### Step 3 — run (only when the user asks to run the container; skip by default)
 
-```bash
-bash skills/anomalygen-release/scripts/build_image.sh --mode develop
+`docker run` invocation, the `--user` / `-e USER` pairing that makes `getpass.getuser()` resolve,
+`--shm-size`, `HF_TOKEN`, and loading an air-gapped bundle:
+[`running.md`](references/running.md).
+
+## Verification
+
+Run these **after Step 1 has produced an image** — they check that image, and the smoke test needs the
+Step 3 `docker run` invocation, so they are not a standalone entry point.
+
+1. Image exists: `docker images "$IMAGE"`.
+2. **product only** — guardrails hold: `ANOMALYGEN_PRODUCT_MODE=1` is set, it runs as
+   the non-root `nvidia` user, and the app code is read-only. If any fails, the
+   image is **not** productized.
+3. Smoke test — in the Step 3 container (repo + `checkpoints/` mounted; baked in for
+   air-gapped), a 20-iteration dry run finishes without error.
+
+   > **The output root must be fresh, or this check is worthless.** A reused root resumes a leftover
+   > checkpoint and finishes instantly, which looks identical to success. The `$(date +%s)` suffix
+   > below is what makes it fresh — keep it, and confirm the run actually logs 20 iterations.
+
+```shell
+IMAGINAIRE_OUTPUT_ROOT="$PWD/results/dryrun-$(date +%s)" torchrun --nproc_per_node=1 \
+    anomalygen/scripts/texture/train.py --config=cosmos_framework/configs/base/config.py \
+    --recipe=ag_config/exp_texture_ft_phone_screen.yaml \
+    -- experiment=anomalygen_texture_ft trainer.max_iter=20 trainer.validation_iter=10 checkpoint.save_iter=10
 ```
 
-Use a minute-level tag when multiple builds may happen in one day:
+## Examples
 
-```bash
-bash skills/anomalygen-release/scripts/build_image.sh \
-    --mode product \
-    --tag "$(date -u +%Y%m%d-%H%M)"
+**"Build the anomalygen product container"** — shared variables, then Step 1 with the product target;
+stop there (no push unless asked):
+
+```shell
+export TARGET=product   # re-export IMAGE so the tag follows the target
+export IMAGE=paidf-anomalygen:cuda-13.2.1-${TARGET}-ubuntu24.04-amd64
+docker build --platform "$PLATFORM" -f docker/Dockerfile \
+    --build-arg TORCH_CUDA_ARCH_LIST \
+    --target "$TARGET" -t "$IMAGE" .
 ```
 
-arm64 / CUDA-13 build (on an aarch64 host) — pass the arm Dockerfile and an
-arch-distinct tag:
+**"Build an air-gapped develop image"** — Step 1's `buildx` variant with the `ckpts` named context,
+then load the saved bundle on the offline host. The checkpoints must already be under
+`./checkpoints/`.
 
-```bash
-bash skills/anomalygen-release/scripts/build_image.sh \
-    --mode product \
-    --dockerfile docker/Dockerfile.arm.cuda130 \
-    --tag "cuda13-arm-$(date -u +%Y%m%d)"
-```
+## Troubleshooting
 
-## Air-Gapped Image
-
-Use when the target environment has no network access and cannot pull
-checkpoints at runtime. The airgapped build uses the `airgapped-product` /
-`airgapped-develop` targets of `docker/Dockerfile`, which bake all checkpoints
-into the image layers via a named build context (`--build-context
-ckpts=checkpoints`). The result is self-contained (~75 GB+).
-
-### Canonical command
-
-```bash
-bash skills/anomalygen-release/scripts/build_airgapped_image.sh \
-    --mode product
-```
-
-The script:
-
-1. **Checks all required checkpoints** in `checkpoints/` (the paths the
-   Dockerfile COPYs in):
-   - `checkpoints/nvidia/Cosmos-Predict2-2B-Text2Image/model.pt`
-   - `checkpoints/nvidia/Cosmos-Predict2-14B-Text2Image/model.pt`
-   - `checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt`
-   - `checkpoints/nvidia/C-RADIO-V3/model.safetensors`
-   - `checkpoints/nvidia/Cosmos-Guardrail1/` (image guardrail — three
-     components: `video_content_safety_filter/safety_filter.pt`, the SigLIP
-     encoder snapshot, and `face_blur_filter/Resnet50_Final.pth`)
-   - `checkpoints/sam2/sam2.1_hiera_large.pt`
-   - `checkpoints/Qwen/Qwen3-VL-4B-Instruct/` (non-empty)
-   - `checkpoints/facebook/dinov2-large/` (non-empty)
-   - `checkpoints/google-t5/t5-large/` **and** `checkpoints/google-t5/t5-11b/`
-     (both baked in — t5-large is the default encoder, t5-11b/T5-XXL is for
-     configs that select it via `ag_config.t5_model_name`)
-
-2. **Auto-downloads** any missing checkpoints via
-   `scripts/utilities/download_checkpoints.sh --model-sizes "2B 14B" --with-t5-11b`
-   (both base sizes and both T5 variants are baked into the image; t5-large +
-   guardrail come by default, `--with-t5-11b` adds T5-XXL ~45 GB).
-   This requires
-   `HF_TOKEN` to be exported and the `hf` CLI (`huggingface_hub >= 1.x`)
-   in `PATH`. If you do
-   not want auto-download, pass `--skip-download` and download manually
-   with the setup skill first.
-
-3. **Builds** the airgapped image after all checkpoints are confirmed present.
-
-Default image names:
-
-| Mode | Tag |
-|---|---|
-| `product` | `paidf-anomalygen-airgapped:<date>` |
-| `develop` | `paidf-anomalygen-dev-airgapped:<date>` |
-
-Options:
-
-```bash
-bash skills/anomalygen-release/scripts/build_airgapped_image.sh \
-    --mode product|develop \
-    --tag YYYYMMDD \
-    --checkpoint-dir checkpoints \
-    --dockerfile docker/Dockerfile \
-    --skip-download
-```
-
-Pass `--dockerfile docker/Dockerfile.arm.cuda130` to build the arm64 / CUDA-13
-air-gapped image instead of the default x86 / CUDA-12.8 one (build on an aarch64
-host). Give it a distinct `--tag` or `--image-name` to avoid clobbering the x86
-image's tag.
-
-### Running the air-gapped image
-
-No volume mounts required — checkpoints live inside the image:
-
-```bash
-docker run --gpus all -it --rm --shm-size=16g \
-    paidf-anomalygen-airgapped:<tag> bash
-```
-
-### Delivering to an air-gapped host
-
-```bash
-# on the build host
-docker save paidf-anomalygen-airgapped:<tag> | gzip \
-    > paidf-anomalygen-airgapped-<tag>.tar.gz
-
-# transfer the .tar.gz to the air-gapped host, then:
-docker load < paidf-anomalygen-airgapped-<tag>.tar.gz
-docker run --gpus all -it --rm --shm-size=16g \
-    paidf-anomalygen-airgapped:<tag> bash
-```
-
-## Product Filesystem Policy
-
-The product image should run as a non-root runtime user. Only production
-implementation paths should be non-writable. Runtime data, artifacts,
-checkpoints, caches, and logs should remain writable.
-
-Production paths expected to be non-writable in product containers and writable
-in develop containers:
-
-```text
-/workspace/paidf-anomalygen/cosmos_predict2/
-/workspace/paidf-anomalygen/imaginaire/
-/workspace/paidf-anomalygen/automatic_mask_placement/
-/workspace/paidf-anomalygen/pseudo_label/
-/workspace/paidf-anomalygen/roi_generate/
-/workspace/paidf-anomalygen/scripts/anomaly_gen/
-/workspace/paidf-anomalygen/scripts/utilities/
-/workspace/paidf-anomalygen/skills/
-/workspace/paidf-anomalygen/README.md
-/workspace/paidf-anomalygen/docker/Dockerfile*
-/workspace/paidf-anomalygen/requirements*.txt
-/workspace/paidf-anomalygen/cosmos-predict2-cuda128.yaml
-```
-
-Runtime paths expected to be writable in both modes:
-
-```text
-/workspace/paidf-anomalygen/results/
-/workspace/paidf-anomalygen/ag_configs/
-/workspace/paidf-anomalygen/ag_inference/
-/workspace/paidf-anomalygen/datasets/
-/workspace/paidf-anomalygen/checkpoints/
-/workspace/paidf-anomalygen/logs/
-/workspace/paidf-anomalygen/tmp/
-/tmp/
-the runtime user's `$HOME` (`/home/anomalygen/` in product images)
-the runtime user's `$HOME/.cache` (used by HF, torch.compile, and triton)
-```
-
-In addition to the top-level directories above, the validator probes a set of
-nested paths that AnomalyGen actually writes to during training, SDG, and
-refine. Top-level writability alone can miss ownership issues on mounted
-volumes or pre-created subdirectories, so each of these must also be writable:
-
-```text
-# Training output
-/workspace/paidf-anomalygen/results/anomaly_gen/_permission_test/checkpoints/model
-
-# SDG output (original and searched buckets, plus per-round refine)
-/workspace/paidf-anomalygen/results/_permission_test/original/reconstructed_image
-/workspace/paidf-anomalygen/results/_permission_test/original/original_mask
-/workspace/paidf-anomalygen/results/_permission_test/original/annotated_image
-/workspace/paidf-anomalygen/results/_permission_test/searched/reconstructed_image
-/workspace/paidf-anomalygen/results/_permission_test/rounds/round_001/sdg/reconstructed_image
-
-# AMP cache
-/workspace/paidf-anomalygen/ag_inference/_permission_test/amp
-/workspace/paidf-anomalygen/ag_inference/_permission_test/resized_masks
-
-# torch.compile / triton cache
-$HOME/.cache/paidf-anomalygen/torch_inductor
-$HOME/.cache/paidf-anomalygen/triton
-
-# Hugging Face cache
-$HOME/.cache/huggingface
-```
-
-The validator also probes that `SDG_result.csv` can be created and written
-under each of the SDG bucket roots:
-
-```text
-/workspace/paidf-anomalygen/results/_permission_test/original/SDG_result.csv
-/workspace/paidf-anomalygen/results/_permission_test/searched/SDG_result.csv
-/workspace/paidf-anomalygen/results/_permission_test/rounds/round_001/sdg/SDG_result.csv
-```
-
-This `SDG_result.csv` probe exists so the validator can fail fast on
-read-only mounts where SDG would later be unable to record its index. It does
-not mean this release skill runs SDG itself; SDG generation remains
-out-of-scope for the release workflow (see Scope above) and is handled by the
-`sdg-inference` skill.
-
-If a product image does not set `ANOMALYGEN_PRODUCT_MODE=1`, runs as root, or
-leaves production code writable, treat the image as not productized.
-
-## Pre-Build Checklist
-
-Before building:
-
-1. Verify these files exist:
-   - `docker/Dockerfile`
-   - `cosmos-predict2-cuda128.yaml`
-   - `requirements-conda-cuda128.txt`
-2. Verify the Docker build context does not intentionally include secrets:
-   - `.env`
-   - token files
-   - SSH keys
-   - private datasets
-   - user result folders
-3. Decide checkpoint strategy for product images:
-   - Thin image: checkpoints mounted or downloaded at runtime.
-   - Fat image: checkpoints copied into image. This is large and should be
-     explicitly requested.
-
-## Validation
-
-After building a product image:
-
-```bash
-bash skills/anomalygen-release/scripts/validate_image_permissions.sh \
-    --mode product \
-    "paidf-anomalygen:${DATE_TAG}"
-```
-
-After building a develop image:
-
-```bash
-bash skills/anomalygen-release/scripts/validate_image_permissions.sh \
-    --mode develop \
-    "paidf-anomalygen-dev:${DATE_TAG}"
-```
-
-If validation fails, do not call the image ready for its intended mode.
-
-## Running the Container
-
-> **Warning:** always pass `--shm-size` (minimum `16g`). PyTorch DataLoader
-> uses `/dev/shm` for multiprocessing shared memory; the Docker default of
-> 64 MB causes "Bus error" crashes or silent hangs during training and
-> inference. Remind the user of this flag whenever reporting a completed build.
-
-Product container:
-
-```bash
-TAG="paidf-anomalygen:$(date -u +%Y%m%d)"
-REPO="$PWD"
-docker run --rm -it --gpus all --shm-size=16g \
-    -v "${REPO}/checkpoints:/workspace/paidf-anomalygen/checkpoints" \
-    -v "${REPO}/datasets:/workspace/paidf-anomalygen/datasets" \
-    -v "${REPO}/results:/workspace/paidf-anomalygen/results" \
-    "${TAG}" \
-    bash
-```
-
-Develop container:
-
-```bash
-TAG="paidf-anomalygen-dev:$(date -u +%Y%m%d)"
-REPO="$PWD"
-docker run --rm -it --gpus all --shm-size=16g \
-    -v "${REPO}:/workspace/paidf-anomalygen" \
-    "${TAG}" \
-    bash
-```
-
-## Release Summary
-
-Report:
-
-```text
-Image: paidf-anomalygen:<tag>
-Mode: product | develop
-Image ID: <docker image id>
-Dockerfile: docker/Dockerfile
-ANOMALYGEN_PRODUCT_MODE: set | unset | failed validation
-Production code: non-writable | writable | failed validation
-Runtime paths: writable | failed validation
-Checkpoint strategy: thin | fat | unknown
-Notes: <warnings, if any>
-```
+- **"TORCH_CUDA_ARCH_LIST is empty and could not be derived"** → something overrode the Dockerfile
+  default with an empty value: a bare `--build-arg` forwards an empty env var, and `get_arch_list()`
+  is `[]` with no GPU. The shared vars guard this with `:-`; otherwise set it by hand (amd64
+  `8.0 8.6 9.0 10.0 12.0`, arm64 `9.0 10.0 10.3 12.0`).
+- **Build seems stuck for an hour** → that is the source compile of flash-attn / TE / apex, which is
+  expected. Don't kill it; watch the layer output instead.
+- **Build OOM** (flash-attn / TE / apex) → lower the job count with
+  `--build-arg MAX_JOBS=…` (default 16).
+- **Missing `--shm-size` (min `16g`)** → "Bus error" / silent hangs: the dataloader
+  uses `/dev/shm` and Docker's 64 MB default is too small. Always pass it.
+- **`failed to find stage "…"`** → bad `--target`; valid: `develop`, `product`,
+  `airgapped-develop`, `airgapped-product`.
+- **Don't build inside a product runtime** (`ANOMALYGEN_PRODUCT_MODE=1`) — build from
+  a clean clone or a develop container.

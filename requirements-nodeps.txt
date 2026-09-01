@@ -1,0 +1,20 @@
+# Packages installed with `uv pip install -r requirements-nodeps.txt --no-deps`.
+#
+# `--no-deps` is a command-level flag — pip/uv have no per-requirement form of it — so these
+# cannot live in requirements.txt (which IS resolved).
+#
+# It is needed for exactly one conflict among its base dependencies: cosmos-framework declares
+# `transformers>=4.57.1,<5.0.0`. Resolving it normally would drag transformers back to 4.x. Every
+# other overlapping base dependency it declares is already satisfied by requirements.txt, which is
+# where the subset this repo actually uses is pinned. Re-check with:
+#   uv pip show cosmos-framework   # then compare Requires against requirements.txt
+#
+# Its optional `train` extra — which we do NOT request — additionally pins
+# `multi-storage-client==0.44.0`, against the 1.0.1 in requirements.txt. Everything its easy_io MSC
+# backend touches still exists in 1.0.1: StorageClient, StorageClientConfig (+ .read_msc_config,
+# .from_dict), types.Range, types.RetryableError, and the client's read/write/list/info/is_file/
+# delete/download_file/upload_file. Re-verify that surface before bumping msc again.
+#
+# Pinned to an exact commit for reproducibility. To bump: pick the new upstream SHA and edit the
+# `@<sha>` below — see CONTRIBUTING.md, "Updating the cosmos-framework pin".
+cosmos-framework @ git+https://github.com/NVIDIA/cosmos-framework.git@a904d2d36b774a51dd06ff9ff906816b1a04f579
